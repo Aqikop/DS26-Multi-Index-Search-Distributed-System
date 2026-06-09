@@ -1,0 +1,5 @@
+# Cấu hình Visual Studio Code
+.vscode/
+
+# Thư mục đầu ra của Maven
+target/
