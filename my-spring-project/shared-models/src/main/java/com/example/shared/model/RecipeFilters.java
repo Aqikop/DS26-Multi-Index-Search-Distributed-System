@@ -16,6 +16,9 @@ public class RecipeFilters {
     private Integer maxIngredients;
     private Integer maxCookTime;
     private Boolean hasPicture;
+    private List<String> ingredients;
+    private List<String> ingredientUnits;
+    private List<Double> ingredientQuantities;
 
     public RecipeFilters() {}
 
@@ -42,4 +45,13 @@ public class RecipeFilters {
 
     public Boolean getHasPicture() { return hasPicture; }
     public void setHasPicture(Boolean hasPicture) { this.hasPicture = hasPicture; }
+
+    public List<String> getIngredients() { return ingredients; }
+    public void setIngredients(List<String> ingredients) { this.ingredients = ingredients; }
+
+    public List<String> getIngredientUnits() { return ingredientUnits; }
+    public void setIngredientUnits(List<String> ingredientUnits) { this.ingredientUnits = ingredientUnits; }
+
+    public List<Double> getIngredientQuantities() { return ingredientQuantities; }
+    public void setIngredientQuantities(List<Double> ingredientQuantities) { this.ingredientQuantities = ingredientQuantities; }
 }
