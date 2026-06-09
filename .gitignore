@@ -1,5 +1,5 @@
-# Cấu hình Visual Studio Code
-.vscode/
+# --- Java / Maven ---
+**/target/
 
-# Thư mục đầu ra của Maven
-target/
+# --- IDEs / Editors ---
+.vscode/
