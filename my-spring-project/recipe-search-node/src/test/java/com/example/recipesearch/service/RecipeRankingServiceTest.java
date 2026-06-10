@@ -26,28 +26,28 @@ class RecipeRankingServiceTest {
         query.setFilters(filters);
 
         RecipeCandidate fastChicken = new RecipeCandidate("1", 0.82, Map.of(
-                "name", "Fast Chicken Bowl",
+                "title", "Fast Chicken Bowl",
                 "meal_type", "main_course",
                 "main_protein", "chicken",
-                "cook_time", 25,
+                "estimated_cook_time_min", 25,
                 "has_picture", true,
-                "ingredients", List.of("chicken breast", "broccoli", "low carb sauce"),
-                "ingredient_units", List.of("g", "g", "tbsp"),
-                "ingredient_quantities", List.of(200.0, 120.0, 1.0)
+                "ingredients_list", List.of("chicken breast", "broccoli", "low carb sauce"),
+                "units_list", List.of("g", "g", "tbsp"),
+                "quantities_list", List.of(200.0, 120.0, 1.0)
         ));
         RecipeCandidate slowChicken = new RecipeCandidate("2", 0.95, Map.of(
-                "name", "Slow Chicken Dinner",
+                "title", "Slow Chicken Dinner",
                 "meal_type", "main_course",
                 "main_protein", "chicken",
-                "cook_time", 55,
+                "estimated_cook_time_min", 55,
                 "has_picture", true,
-                "ingredients", List.of("chicken", "rice")
+                "ingredients_list", List.of("chicken", "rice")
         ));
         RecipeCandidate fish = new RecipeCandidate("3", 0.99, Map.of(
-                "name", "Fish Dinner",
+                "title", "Fish Dinner",
                 "meal_type", "main_course",
                 "main_protein", "fish",
-                "cook_time", 20,
+                "estimated_cook_time_min", 20,
                 "has_picture", true
         ));
 

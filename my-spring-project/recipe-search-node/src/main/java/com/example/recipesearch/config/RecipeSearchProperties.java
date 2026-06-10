@@ -16,8 +16,7 @@ public record RecipeSearchProperties(
 ) {
     public RecipeSearchProperties {
         if (qdrant == null) {
-            qdrant = new Qdrant("localhost", 6334, false, "", "recipes", null,
-                    "sentence-transformers/all-minilm-l6-v2");
+            throw new IllegalArgumentException("Qdrant configuration (recipe-search.qdrant) is missing in application.yml");
         }
         if (candidateLimit == 0) {
             candidateLimit = 100;
