@@ -1,6 +1,7 @@
 package com.example.recipesearch.service;
 
 import com.example.recipesearch.repository.RecipeCandidate;
+import com.example.shared.model.Ingredient;
 import com.example.shared.model.RecipeFilters;
 import com.example.shared.model.RecipeQuery;
 import com.example.shared.model.RecipeQueryResult;
@@ -21,12 +22,19 @@ import org.springframework.stereotype.Service;
 public class RecipeRankingService {
     private static final Pattern TOKEN_SPLIT = Pattern.compile("[^a-z0-9]+");
 
+    private final RecipePayloadMapper payloadMapper;
+
+    public RecipeRankingService(RecipePayloadMapper payloadMapper) {
+        this.payloadMapper = payloadMapper;
+    }
+
     public List<RecipeQueryResult> rank(RecipeQuery query, List<RecipeCandidate> candidates, int topK) {
         RecipeFilters filters = query.getFilters();
         Set<String> queryTerms = tokenize(query.getRecipeQuery());
 
         return candidates.stream()
-                .filter(candidate -> matchesFilters(candidate.payload(), filters))
+                .map(candidate -> new RankedCandidate(candidate, payloadMapper.toDocument(candidate.payload())))
+                .filter(candidate -> matchesFilters(candidate.document(), filters))
                 .map(candidate -> toRankedResult(candidate, filters, queryTerms))
                 .sorted(Comparator.comparing(RecipeQueryResult::getScore, Comparator.nullsLast(Double::compareTo)).reversed())
                 .limit(topK)
@@ -34,16 +42,17 @@ public class RecipeRankingService {
     }
 
     private RecipeQueryResult toRankedResult(
-            RecipeCandidate candidate,
+            RankedCandidate rankedCandidate,
             RecipeFilters filters,
             Set<String> queryTerms
     ) {
-        Map<String, Object> payload = candidate.payload();
+        RecipeCandidate candidate = rankedCandidate.candidate();
+        RecipeDocument document = rankedCandidate.document();
         double qdrantScore = normalize(candidate.qdrantScore());
-        double ingredientOverlap = ingredientOverlap(queryTerms, payload);
-        double cookTimePreference = cookTimePreference(filters, payload);
-        double proteinRelevance = proteinRelevance(filters, payload, queryTerms);
-        int matchedFilters = countMatchedFilters(payload, filters);
+        double ingredientOverlap = ingredientOverlap(queryTerms, document);
+        double cookTimePreference = cookTimePreference(filters, document);
+        double proteinRelevance = proteinRelevance(filters, document, queryTerms);
+        int matchedFilters = countMatchedFilters(document, filters);
 
         double finalScore =
                 (qdrantScore * 0.55)
@@ -52,59 +61,98 @@ public class RecipeRankingService {
                         + (proteinRelevance * 0.10);
 
         RecipeQueryResult result = new RecipeQueryResult();
-        result.setItemName(firstString(payload, "itemName", "item_name", "name", "title"));
-        result.setPayload(stringPayload(payload));
+        result.setItemName(document.itemName());
+        result.setPayload(document.payloadText());
         result.setScore(round(finalScore));
-        result.setIngredients(values(payload, "ingredients", "ingredient_names"));
-        result.setIngredientUnits(values(payload, "ingredientUnits", "ingredient_units", "units"));
-        result.setIngredientQuantities(doubleValues(payload, "ingredientQuantities", "ingredient_quantities", "quantities"));
-        result.setMetadata(metadata(candidate, payload, matchedFilters));
+        result.setIngredients(document.ingredients());
+        result.setMissingIngredients(calculateMissingIngredients(document.ingredients(), filters));
+        result.setMetadata(metadata(candidate, document, matchedFilters));
         return result;
     }
 
-    public boolean matchesFilters(Map<String, Object> payload, RecipeFilters filters) {
+    private List<Ingredient> calculateMissingIngredients(List<Ingredient> recipeIngredients, RecipeFilters filters) {
+        if (recipeIngredients == null || recipeIngredients.isEmpty()) return List.of();
+        if (filters == null || filters.getIngredients() == null || filters.getIngredients().isEmpty()) return recipeIngredients;
+
+        List<Ingredient> userIngredients = filters.getIngredients();
+        Map<String, Double> userInventory = new LinkedHashMap<>();
+        
+        for (Ingredient ui : userIngredients) {
+            if (ui.getName() == null) continue;
+            String normName = normalizeText(ui.getName());
+            userInventory.put(normName, ui.getQuantity());
+        }
+
+        List<Ingredient> missing = new ArrayList<>();
+        for (Ingredient ri : recipeIngredients) {
+            if (ri.getName() == null) continue;
+            String normRecipeName = normalizeText(ri.getName());
+            
+            boolean found = false;
+            // Fuzzy match: check if recipe ingredient name is contained in user ingredient name or vice versa
+            for (Map.Entry<String, Double> entry : userInventory.entrySet()) {
+                if (normRecipeName.contains(entry.getKey()) || entry.getKey().contains(normRecipeName)) {
+                    found = true;
+                    // Check quantity if available
+                    if (ri.getQuantity() != null && entry.getValue() != null) {
+                        double missingQty = ri.getQuantity() - entry.getValue();
+                        if (missingQty > 0) {
+                            missing.add(new Ingredient(ri.getName(), missingQty, ri.getUnit()));
+                        }
+                    }
+                    break;
+                }
+            }
+            if (!found) {
+                missing.add(ri);
+            }
+        }
+        return missing;
+    }
+
+    public boolean matchesFilters(RecipeDocument document, RecipeFilters filters) {
         if (filters == null) {
             return true;
         }
-        return equalsIfPresent(filters.getMealType(), firstString(payload, "mealType", "meal_type"))
-                && equalsIfPresent(filters.getCuisine(), firstString(payload, "cuisine"))
-                && anyIfPresent(filters.getCookingMethod(), values(payload, "cookingMethod", "cooking_method", "cooking_methods"))
-                && equalsIfPresent(filters.getMainProtein(), firstString(payload, "mainProtein", "main_protein", "protein"))
-                && allIfPresent(filters.getDietFlags(), values(payload, "dietFlags", "diet_flags", "diets"))
-                && lessOrEqualIfPresent(sizeFromPayload(payload), filters.getMaxIngredients())
-                && lessOrEqualIfPresent(number(payload, "cookTime", "cook_time", "cookTimeMinutes", "cook_time_minutes"), filters.getMaxCookTime())
-                && equalsIfPresent(filters.getHasPicture(), bool(payload, "hasPicture", "has_picture", "picture"));
+        return equalsIfPresent(filters.getMealType(), document.mealType())
+                && equalsIfPresent(filters.getCuisine(), document.cuisine())
+                && anyIfPresent(filters.getCookingMethod(), document.cookingMethods())
+                && equalsIfPresent(filters.getMainProtein(), document.mainProtein())
+                && allIfPresent(filters.getDietFlags(), document.dietFlags())
+                && lessOrEqualIfPresent(document.ingredientCount(), filters.getMaxIngredients())
+                && lessOrEqualIfPresent(document.cookTime(), filters.getMaxCookTime())
+                && equalsIfPresent(filters.getHasPicture(), document.hasPicture());
     }
 
-    private Map<String, Object> metadata(RecipeCandidate candidate, Map<String, Object> payload, int matchedFilters) {
+    private Map<String, Object> metadata(RecipeCandidate candidate, RecipeDocument document, int matchedFilters) {
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put("qdrantScore", round(candidate.qdrantScore()));
-        metadata.put("cookTime", number(payload, "cookTime", "cook_time", "cookTimeMinutes", "cook_time_minutes"));
-        metadata.put("mainProtein", firstString(payload, "mainProtein", "main_protein", "protein"));
-        metadata.put("ingredientCount", sizeFromPayload(payload));
+        metadata.put("cookTime", document.cookTime());
+        metadata.put("mainProtein", document.mainProtein());
+        metadata.put("ingredientCount", document.ingredientCount());
         metadata.put("matchedFilters", matchedFilters);
         metadata.put("qdrantPointId", candidate.id());
         return metadata;
     }
 
-    private int countMatchedFilters(Map<String, Object> payload, RecipeFilters filters) {
+    private int countMatchedFilters(RecipeDocument document, RecipeFilters filters) {
         if (filters == null) {
             return 0;
         }
         int matched = 0;
-        if (filters.getMealType() != null && equalsIfPresent(filters.getMealType(), firstString(payload, "mealType", "meal_type"))) matched++;
-        if (filters.getCuisine() != null && equalsIfPresent(filters.getCuisine(), firstString(payload, "cuisine"))) matched++;
-        if (filters.getCookingMethod() != null && anyIfPresent(filters.getCookingMethod(), values(payload, "cookingMethod", "cooking_method", "cooking_methods"))) matched++;
-        if (filters.getMainProtein() != null && equalsIfPresent(filters.getMainProtein(), firstString(payload, "mainProtein", "main_protein", "protein"))) matched++;
-        if (filters.getDietFlags() != null && allIfPresent(filters.getDietFlags(), values(payload, "dietFlags", "diet_flags", "diets"))) matched++;
-        if (filters.getMaxIngredients() != null && lessOrEqualIfPresent(sizeFromPayload(payload), filters.getMaxIngredients())) matched++;
-        if (filters.getMaxCookTime() != null && lessOrEqualIfPresent(number(payload, "cookTime", "cook_time", "cookTimeMinutes", "cook_time_minutes"), filters.getMaxCookTime())) matched++;
-        if (filters.getHasPicture() != null && equalsIfPresent(filters.getHasPicture(), bool(payload, "hasPicture", "has_picture", "picture"))) matched++;
+        if (filters.getMealType() != null && equalsIfPresent(filters.getMealType(), document.mealType())) matched++;
+        if (filters.getCuisine() != null && equalsIfPresent(filters.getCuisine(), document.cuisine())) matched++;
+        if (filters.getCookingMethod() != null && anyIfPresent(filters.getCookingMethod(), document.cookingMethods())) matched++;
+        if (filters.getMainProtein() != null && equalsIfPresent(filters.getMainProtein(), document.mainProtein())) matched++;
+        if (filters.getDietFlags() != null && allIfPresent(filters.getDietFlags(), document.dietFlags())) matched++;
+        if (filters.getMaxIngredients() != null && lessOrEqualIfPresent(document.ingredientCount(), filters.getMaxIngredients())) matched++;
+        if (filters.getMaxCookTime() != null && lessOrEqualIfPresent(document.cookTime(), filters.getMaxCookTime())) matched++;
+        if (filters.getHasPicture() != null && equalsIfPresent(filters.getHasPicture(), document.hasPicture())) matched++;
         return matched;
     }
 
-    private double ingredientOverlap(Set<String> queryTerms, Map<String, Object> payload) {
-        Set<String> ingredientTerms = tokenize(values(payload, "ingredients", "ingredient_names"));
+    private double ingredientOverlap(Set<String> queryTerms, RecipeDocument document) {
+        Set<String> ingredientTerms = tokenize(ingredientNames(document.ingredients()));
         if (queryTerms.isEmpty() || ingredientTerms.isEmpty()) {
             return 0.0;
         }
@@ -112,8 +160,15 @@ public class RecipeRankingService {
         return Math.min(1.0, hits / (double) Math.min(queryTerms.size(), ingredientTerms.size()));
     }
 
-    private double cookTimePreference(RecipeFilters filters, Map<String, Object> payload) {
-        Number cookTime = number(payload, "cookTime", "cook_time", "cookTimeMinutes", "cook_time_minutes");
+    private List<String> ingredientNames(List<Ingredient> ingredients) {
+        return ingredients.stream()
+                .map(Ingredient::getName)
+                .filter(Objects::nonNull)
+                .toList();
+    }
+
+    private double cookTimePreference(RecipeFilters filters, RecipeDocument document) {
+        Integer cookTime = document.cookTime();
         if (cookTime == null) {
             return 0.5;
         }
@@ -124,8 +179,8 @@ public class RecipeRankingService {
         return Math.max(0.0, Math.min(1.0, 1.2 - ratio));
     }
 
-    private double proteinRelevance(RecipeFilters filters, Map<String, Object> payload, Set<String> queryTerms) {
-        String protein = firstString(payload, "mainProtein", "main_protein", "protein");
+    private double proteinRelevance(RecipeFilters filters, RecipeDocument document, Set<String> queryTerms) {
+        String protein = document.mainProtein();
         if (protein == null || protein.isBlank()) {
             return 0.0;
         }
@@ -135,15 +190,6 @@ public class RecipeRankingService {
             return 1.0;
         }
         return queryTerms.contains(normalizedProtein) ? 0.75 : 0.0;
-    }
-
-    private Number sizeFromPayload(Map<String, Object> payload) {
-        Number explicit = number(payload, "ingredientCount", "ingredient_count", "numIngredients", "num_ingredients");
-        if (explicit != null) {
-            return explicit;
-        }
-        List<String> ingredients = values(payload, "ingredients", "ingredient_names");
-        return ingredients.isEmpty() ? null : ingredients.size();
     }
 
     private boolean equalsIfPresent(String expected, String actual) {
@@ -204,92 +250,6 @@ public class RecipeRankingService {
         return terms;
     }
 
-    private String firstString(Map<String, Object> payload, String... keys) {
-        for (String key : keys) {
-            Object value = payload.get(key);
-            if (value != null) {
-                return String.valueOf(value);
-            }
-        }
-        return null;
-    }
-
-    private Number number(Map<String, Object> payload, String... keys) {
-        for (String key : keys) {
-            Object value = payload.get(key);
-            if (value instanceof Number number) {
-                return number;
-            }
-            if (value instanceof String text && !text.isBlank()) {
-                try {
-                    return Double.parseDouble(text);
-                } catch (NumberFormatException ignored) {
-                    return null;
-                }
-            }
-        }
-        return null;
-    }
-
-    private Boolean bool(Map<String, Object> payload, String... keys) {
-        for (String key : keys) {
-            Object value = payload.get(key);
-            if (value instanceof Boolean bool) {
-                return bool;
-            }
-            if (value instanceof String text && !text.isBlank()) {
-                return Boolean.parseBoolean(text);
-            }
-        }
-        return null;
-    }
-
-    private List<String> values(Map<String, Object> payload, String... keys) {
-        List<String> result = new ArrayList<>();
-        for (String key : keys) {
-            Object value = payload.get(key);
-            if (value instanceof Collection<?> collection) {
-                collection.stream().filter(Objects::nonNull).map(String::valueOf).forEach(result::add);
-            } else if (value != null) {
-                result.add(String.valueOf(value));
-            }
-        }
-        return result;
-    }
-
-    private List<Double> doubleValues(Map<String, Object> payload, String... keys) {
-        List<Double> result = new ArrayList<>();
-        for (String key : keys) {
-            Object value = payload.get(key);
-            if (value instanceof Collection<?> collection) {
-                collection.stream()
-                        .map(this::toDouble)
-                        .filter(Objects::nonNull)
-                        .forEach(result::add);
-            } else {
-                Double parsed = toDouble(value);
-                if (parsed != null) {
-                    result.add(parsed);
-                }
-            }
-        }
-        return result;
-    }
-
-    private Double toDouble(Object value) {
-        if (value instanceof Number number) {
-            return number.doubleValue();
-        }
-        if (value instanceof String text && !text.isBlank()) {
-            try {
-                return Double.parseDouble(text);
-            } catch (NumberFormatException ignored) {
-                return null;
-            }
-        }
-        return null;
-    }
-
     private String normalizeText(String value) {
         return value == null ? "" : value.trim().toLowerCase(Locale.ROOT).replace('_', ' ');
     }
@@ -305,14 +265,6 @@ public class RecipeRankingService {
         return Math.round(value * 10_000.0) / 10_000.0;
     }
 
-    private String stringPayload(Map<String, Object> payload) {
-        Object text = payload.get("payload");
-        if (text == null) {
-            text = payload.get("description");
-        }
-        if (text == null) {
-            text = payload.get("text");
-        }
-        return text == null ? payload.toString() : String.valueOf(text);
+    private record RankedCandidate(RecipeCandidate candidate, RecipeDocument document) {
     }
 }

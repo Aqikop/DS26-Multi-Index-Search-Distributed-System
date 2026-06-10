@@ -3,4 +3,5 @@
 
 # --- IDEs / Editors ---
 .vscode/
-app.py
+
+.env

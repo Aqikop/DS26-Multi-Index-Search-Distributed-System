@@ -9,6 +9,6 @@ recipe-search:
     port: ${QDRANT_GRPC_PORT:6334}
     tls: ${QDRANT_TLS:true}
     api-key: ${QDRANT_API_KEY:eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIiwic3ViamVjdCI6ImFwaS1rZXk6ZWVlODRkZTMtYWY1MS00YTI2LWE1YmItY2FmYjgzZGYwNTczIn0.guJ_qc5Z8SMdJUOyaZkKJRDFAu-re_0gr_1tXVA2Tqo}
-    collection: recipes
+    collection: recipes2.1
     vector-name: ${QDRANT_RECIPE_VECTOR_NAME:}
     inference-model: ${QDRANT_INFERENCE_MODEL:sentence-transformers/all-minilm-l6-v2}

@@ -7,27 +7,12 @@ public class NutritionQuery {
 
     public NutritionQuery() {}
 
-    public String getNutritionQuery() {
-        return nutritionQuery;
-    }
+    public String getNutritionQuery() { return nutritionQuery;}
+    public void setNutritionQuery(String nutritionQuery) { this.nutritionQuery = nutritionQuery;}
 
-    public void setNutritionQuery(String nutritionQuery) {
-        this.nutritionQuery = nutritionQuery;
-    }
+    public NutritionFilters getFilters() { return filters;}
+    public void setFilters(NutritionFilters filters) { this.filters = filters;}
 
-    public NutritionFilters getFilters() {
-        return filters;
-    }
-
-    public void setFilters(NutritionFilters filters) {
-        this.filters = filters;
-    }
-
-    public StatusState getState() {
-        return state;
-    }
-
-    public void setState(StatusState state) {
-        this.state = state;
-    }
+    public StatusState getState() { return state;}
+    public void setState(StatusState state) { this.state = state;}
 }

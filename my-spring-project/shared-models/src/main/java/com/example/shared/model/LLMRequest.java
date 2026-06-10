@@ -5,11 +5,6 @@ public class LLMRequest {
 
     public LLMRequest() {}
 
-    public String getUserQuery() {
-        return userQuery;
-    }
-
-    public void setUserQuery(String userQuery) {
-        this.userQuery = userQuery;
-    }
+    public String getUserQuery() { return userQuery;}
+    public void setUserQuery(String userQuery) { this.userQuery = userQuery;}
 }

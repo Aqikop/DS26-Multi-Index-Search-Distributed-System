@@ -11,7 +11,7 @@ import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class RecipeRankingServiceTest {
-    private final RecipeRankingService rankingService = new RecipeRankingService();
+    private final RecipeRankingService rankingService = new RecipeRankingService(new RecipePayloadMapper());
 
     @Test
     void filtersAndRanksCandidatesWithApplicationScore() {
@@ -56,10 +56,13 @@ class RecipeRankingServiceTest {
         assertThat(results).hasSize(1);
         assertThat(results.get(0).getItemName()).isEqualTo("Fast Chicken Bowl");
         assertThat(results.get(0).getIngredients())
+                .extracting("name")
                 .containsExactly("chicken breast", "broccoli", "low carb sauce");
-        assertThat(results.get(0).getIngredientUnits())
+        assertThat(results.get(0).getIngredients())
+                .extracting("unit")
                 .containsExactly("g", "g", "tbsp");
-        assertThat(results.get(0).getIngredientQuantities())
+        assertThat(results.get(0).getIngredients())
+                .extracting("quantity")
                 .containsExactly(200.0, 120.0, 1.0);
         assertThat(results.get(0).getMetadata())
                 .containsEntry("qdrantScore", 0.82)

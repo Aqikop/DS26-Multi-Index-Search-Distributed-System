@@ -1,6 +1,8 @@
 package com.example.shared.model;
 
+import java.util.ArrayList;
 import java.util.List;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.annotation.JsonNaming;
@@ -16,11 +18,28 @@ public class RecipeFilters {
     private Integer maxIngredients;
     private Integer maxCookTime;
     private Boolean hasPicture;
-    private List<String> ingredients;
+
+    // Parallel arrays from LLM response
+    private List<String> ingredientsList;
     private List<String> ingredientUnits;
     private List<Double> ingredientQuantities;
 
     public RecipeFilters() {}
+
+    @JsonIgnore
+    public List<Ingredient> getIngredients() {
+        if (ingredientsList == null) {
+            return null;
+        }
+        List<Ingredient> list = new ArrayList<>(ingredientsList.size());
+        for (int i = 0; i < ingredientsList.size(); i++) {
+            String name = ingredientsList.get(i);
+            String unit = (ingredientUnits != null && i < ingredientUnits.size()) ? ingredientUnits.get(i) : null;
+            Double qty = (ingredientQuantities != null && i < ingredientQuantities.size()) ? ingredientQuantities.get(i) : null;
+            list.add(new Ingredient(name, qty, unit));
+        }
+        return list;
+    }
 
     public String getMealType() { return mealType; }
     public void setMealType(String mealType) { this.mealType = mealType; }
@@ -46,8 +65,8 @@ public class RecipeFilters {
     public Boolean getHasPicture() { return hasPicture; }
     public void setHasPicture(Boolean hasPicture) { this.hasPicture = hasPicture; }
 
-    public List<String> getIngredients() { return ingredients; }
-    public void setIngredients(List<String> ingredients) { this.ingredients = ingredients; }
+    public List<String> getIngredientsList() { return ingredientsList; }
+    public void setIngredientsList(List<String> ingredientsList) { this.ingredientsList = ingredientsList; }
 
     public List<String> getIngredientUnits() { return ingredientUnits; }
     public void setIngredientUnits(List<String> ingredientUnits) { this.ingredientUnits = ingredientUnits; }
