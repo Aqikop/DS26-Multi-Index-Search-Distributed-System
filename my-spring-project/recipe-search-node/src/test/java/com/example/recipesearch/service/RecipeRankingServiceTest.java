@@ -71,4 +71,48 @@ class RecipeRankingServiceTest {
                 .containsEntry("ingredientCount", 3)
                 .containsEntry("matchedFilters", 4);
     }
+
+    @Test
+    void filtersByNutritionHardLimits() {
+        RecipeQuery query = new RecipeQuery();
+        query.setRecipeQuery("healthy dinner");
+
+        RecipeFilters filters = new RecipeFilters();
+        filters.setMaxCalories(500.0);
+        filters.setMinProtein(30.0);
+        query.setFilters(filters);
+
+        // Good recipe: 450 calories, 35 protein -> Should pass
+        RecipeCandidate goodRecipe = new RecipeCandidate("1", 0.90, Map.of(
+                "title", "Good Healthy Chicken",
+                "nutrition_total.calories", 450.0,
+                "nutrition_total.protein", 35.0
+        ));
+
+        // Bad calories recipe: 600 calories, 40 protein -> Should fail (max calories is 500)
+        RecipeCandidate badCaloriesRecipe = new RecipeCandidate("2", 0.95, Map.of(
+                "title", "High Calorie Chicken",
+                "nutrition_total.calories", 600.0,
+                "nutrition_total.protein", 40.0
+        ));
+
+        // Bad protein recipe: 400 calories, 20 protein -> Should fail (min protein is 30)
+        RecipeCandidate badProteinRecipe = new RecipeCandidate("3", 0.99, Map.of(
+                "title", "Low Protein Salad",
+                "nutrition_total.calories", 400.0,
+                "nutrition_total.protein", 20.0
+        ));
+
+        // Missing nutrition info -> Should fail because filters are strict
+        RecipeCandidate noNutritionRecipe = new RecipeCandidate("4", 0.88, Map.of(
+                "title", "Mystery Meal"
+        ));
+
+        List<RecipeQueryResult> results = rankingService.rank(query, List.of(goodRecipe, badCaloriesRecipe, badProteinRecipe, noNutritionRecipe), 10);
+
+        assertThat(results).hasSize(1);
+        assertThat(results.get(0).getItemName()).isEqualTo("Good Healthy Chicken");
+        assertThat(results.get(0).getNutrition().getCalories()).isEqualTo(450.0);
+        assertThat(results.get(0).getNutrition().getProtein()).isEqualTo(35.0);
+    }
 }

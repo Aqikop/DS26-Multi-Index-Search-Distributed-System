@@ -9,6 +9,7 @@ import java.util.Objects;
 import org.springframework.stereotype.Component;
 
 import com.example.shared.model.Ingredient;
+import com.example.shared.model.Nutrition;
 
 @Component
 public class RecipePayloadMapper {
@@ -16,6 +17,7 @@ public class RecipePayloadMapper {
     public RecipeDocument toDocument(Map<String, Object> payload) {
         List<Ingredient> ingredients = ingredients(payload);
         Integer explicitIngredientCount = getInteger(payload, "ingredient_count");
+        Nutrition nutrition = extractNutrition(payload);
 
         return new RecipeDocument(
                 getString(payload, "title"),
@@ -29,8 +31,43 @@ public class RecipePayloadMapper {
                 getInteger(payload, "estimated_cook_time_min"),
                 getBoolean(payload, "has_picture"),
                 ingredients,
+                nutrition,
                 payload
         );
+    }
+
+    private Nutrition extractNutrition(Map<String, Object> payload) {
+        // Look for flat keys first, or nested if applicable. The sample uses flat keys like "nutrition_total.calories"
+        return new Nutrition(
+                getDouble(payload, "nutrition_total.calories"),
+                getDouble(payload, "nutrition_total.protein"),
+                getDouble(payload, "nutrition_total.fat"),
+                getDouble(payload, "nutrition_total.carbs"),
+                getDouble(payload, "nutrition_total.fiber"),
+                getDouble(payload, "nutrition_total.sugar"),
+                getDouble(payload, "nutrition_total.sodium_mg")
+        );
+    }
+
+    private Double getDouble(Map<String, Object> payload, String key) {
+        if (payload == null) return null;
+        if (payload.containsKey(key)) {
+            return toDouble(payload.get(key));
+        }
+        if (key.contains(".")) {
+            String[] parts = key.split("\\.");
+            Map<String, Object> current = payload;
+            for (int i = 0; i < parts.length - 1; i++) {
+                Object val = current.get(parts[i]);
+                if (val instanceof Map<?, ?> map) {
+                    current = (Map<String, Object>) map;
+                } else {
+                    return null;
+                }
+            }
+            return toDouble(current.get(parts[parts.length - 1]));
+        }
+        return null;
     }
 
     private String getString(Map<String, Object> payload, String key) {
@@ -66,7 +103,9 @@ public class RecipePayloadMapper {
         List<String> result = new ArrayList<>();
         Object value = payload.get(key);
         if (value instanceof Collection<?> collection) {
-            collection.stream().filter(Objects::nonNull).map(String::valueOf).forEach(result::add);
+            collection.stream()
+                    .map(v -> v == null ? null : String.valueOf(v))
+                    .forEach(result::add);
         } else if (value != null) {
             result.add(String.valueOf(value));
         }
@@ -79,16 +118,33 @@ public class RecipePayloadMapper {
         if (value instanceof Collection<?> collection) {
             collection.stream()
                     .map(this::toDouble)
-                    .filter(Objects::nonNull)
                     .forEach(result::add);
-        } else {
+        } else if (value != null) {
             Double parsed = toDouble(value);
-            if (parsed != null) result.add(parsed);
+            result.add(parsed);
         }
         return result;
     }
 
     private List<Ingredient> ingredients(Map<String, Object> payload) {
+        Object parsedObj = payload.get("parsed_ingredients");
+        if (parsedObj instanceof Collection<?> collection) {
+            List<Ingredient> ingredients = new ArrayList<>();
+            for (Object item : collection) {
+                if (item instanceof Map<?, ?> map) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> ingMap = (Map<String, Object>) map;
+                    String name = getString(ingMap, "name");
+                    Double quantity = getDouble(ingMap, "quantity");
+                    String unit = getString(ingMap, "unit");
+                    ingredients.add(new Ingredient(name, quantity, unit));
+                }
+            }
+            if (!ingredients.isEmpty()) {
+                return ingredients;
+            }
+        }
+
         List<String> names = getStringList(payload, "ingredients_list");
         List<String> units = getStringList(payload, "units_list");
         List<Double> quantities = getDoubleList(payload, "quantities_list");

@@ -1,23 +1,26 @@
 package com.example.recipesearch.repository;
 
-import static io.qdrant.client.QueryFactory.nearest;
-import static io.qdrant.client.WithPayloadSelectorFactory.enable;
-
-import com.example.recipesearch.config.RecipeSearchProperties;
-import io.qdrant.client.QdrantClient;
-import io.qdrant.client.grpc.JsonWithInt;
-import io.qdrant.client.grpc.Points.Document;
-import io.qdrant.client.grpc.Points.QueryPoints;
-import io.qdrant.client.grpc.Points.ScoredPoint;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Repository;
+
+import com.example.recipesearch.config.RecipeSearchProperties;
+
+import io.qdrant.client.QdrantClient;
+import static io.qdrant.client.QueryFactory.nearest;
+import static io.qdrant.client.WithPayloadSelectorFactory.enable;
+import io.qdrant.client.grpc.JsonWithInt;
+import io.qdrant.client.grpc.Points.Document;
+import io.qdrant.client.grpc.Points.QueryPoints;
+import io.qdrant.client.grpc.Points.ScoredPoint;
 
 @Repository
 public class QdrantRecipeRepository {
@@ -54,7 +57,7 @@ public class QdrantRecipeRepository {
         }
 
         try {
-            List<ScoredPoint> points = qdrantClient.queryAsync(request.build()).get();
+            List<ScoredPoint> points = qdrantClient.queryAsync(request.build()).get(60, TimeUnit.SECONDS);
             List<RecipeCandidate> candidates = new ArrayList<>(points.size());
             for (ScoredPoint point : points) {
                 candidates.add(new RecipeCandidate(
@@ -67,8 +70,8 @@ public class QdrantRecipeRepository {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new RecipeSearchRepositoryException("Interrupted while querying Qdrant recipes collection", e);
-        } catch (ExecutionException e) {
-            log.warn("Qdrant recipe search failed for collection {}", qdrant.collection(), e);
+        } catch (ExecutionException | TimeoutException e) {
+            log.warn("Qdrant recipe search failed or timed out for collection {}", qdrant.collection(), e);
             throw new RecipeSearchRepositoryException("Unable to query Qdrant recipes collection", e);
         }
     }
@@ -94,7 +97,6 @@ public class QdrantRecipeRepository {
             case STRUCT_VALUE -> convertPayload(value.getStructValue().getFieldsMap());
             case LIST_VALUE -> value.getListValue().getValuesList().stream()
                     .map(this::convertValue)
-                    .filter(Objects::nonNull)
                     .toList();
         };
     }

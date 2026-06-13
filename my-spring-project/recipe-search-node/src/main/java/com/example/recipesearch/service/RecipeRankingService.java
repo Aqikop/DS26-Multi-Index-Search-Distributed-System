@@ -30,12 +30,13 @@ public class RecipeRankingService {
 
     public List<RecipeQueryResult> rank(RecipeQuery query, List<RecipeCandidate> candidates, int topK) {
         RecipeFilters filters = query.getFilters();
-        Set<String> queryTerms = tokenize(query.getRecipeQuery());
+        String rawQuery = query.getRecipeQuery() != null ? query.getRecipeQuery() : "";
+        Set<String> queryTerms = tokenize(rawQuery);
 
         return candidates.stream()
                 .map(candidate -> new RankedCandidate(candidate, payloadMapper.toDocument(candidate.payload())))
                 .filter(candidate -> matchesFilters(candidate.document(), filters))
-                .map(candidate -> toRankedResult(candidate, filters, queryTerms))
+                .map(candidate -> toRankedResult(candidate, filters, queryTerms, rawQuery))
                 .sorted(Comparator.comparing(RecipeQueryResult::getScore, Comparator.nullsLast(Double::compareTo)).reversed())
                 .limit(topK)
                 .toList();
@@ -44,20 +45,25 @@ public class RecipeRankingService {
     private RecipeQueryResult toRankedResult(
             RankedCandidate rankedCandidate,
             RecipeFilters filters,
-            Set<String> queryTerms
+            Set<String> queryTerms,
+            String rawQuery
     ) {
         RecipeCandidate candidate = rankedCandidate.candidate();
         RecipeDocument document = rankedCandidate.document();
+        
         double qdrantScore = normalize(candidate.qdrantScore());
+        double titleRelevance = titleRelevance(rawQuery, queryTerms, document);
         double ingredientOverlap = ingredientOverlap(queryTerms, document);
         double cookTimePreference = cookTimePreference(filters, document);
         double proteinRelevance = proteinRelevance(filters, document, queryTerms);
         int matchedFilters = countMatchedFilters(document, filters);
 
+        // Adjust weights to include titleRelevance
         double finalScore =
-                (qdrantScore * 0.55)
+                (qdrantScore * 0.40)
+                        + (titleRelevance * 0.20)
                         + (ingredientOverlap * 0.20)
-                        + (cookTimePreference * 0.15)
+                        + (cookTimePreference * 0.10)
                         + (proteinRelevance * 0.10);
 
         RecipeQueryResult result = new RecipeQueryResult();
@@ -66,7 +72,8 @@ public class RecipeRankingService {
         result.setScore(round(finalScore));
         result.setIngredients(document.ingredients());
         result.setMissingIngredients(calculateMissingIngredients(document.ingredients(), filters));
-        result.setMetadata(metadata(candidate, document, matchedFilters));
+        result.setNutrition(document.nutrition());
+        result.setMetadata(metadata(candidate, document, matchedFilters, titleRelevance));
         return result;
     }
 
@@ -114,7 +121,7 @@ public class RecipeRankingService {
         if (filters == null) {
             return true;
         }
-        return equalsIfPresent(filters.getMealType(), document.mealType())
+        boolean basicMatch = equalsIfPresent(filters.getMealType(), document.mealType())
                 && equalsIfPresent(filters.getCuisine(), document.cuisine())
                 && anyIfPresent(filters.getCookingMethod(), document.cookingMethods())
                 && equalsIfPresent(filters.getMainProtein(), document.mainProtein())
@@ -122,11 +129,35 @@ public class RecipeRankingService {
                 && lessOrEqualIfPresent(document.ingredientCount(), filters.getMaxIngredients())
                 && lessOrEqualIfPresent(document.cookTime(), filters.getMaxCookTime())
                 && equalsIfPresent(filters.getHasPicture(), document.hasPicture());
+
+        if (!basicMatch) {
+            return false;
+        }
+
+        if (document.nutrition() == null) {
+            return !hasNutritionFilters(filters);
+        }
+
+        return lessOrEqualIfPresent(document.nutrition().getCalories(), filters.getMaxCalories())
+                && greaterOrEqualIfPresent(document.nutrition().getProtein(), filters.getMinProtein())
+                && lessOrEqualIfPresent(document.nutrition().getFat(), filters.getMaxFat())
+                && lessOrEqualIfPresent(document.nutrition().getCarbs(), filters.getMaxCarbs())
+                && greaterOrEqualIfPresent(document.nutrition().getFiber(), filters.getMinFiber())
+                && lessOrEqualIfPresent(document.nutrition().getSugar(), filters.getMaxSugar())
+                && lessOrEqualIfPresent(document.nutrition().getSodiumMg(), filters.getMaxSodium());
     }
 
-    private Map<String, Object> metadata(RecipeCandidate candidate, RecipeDocument document, int matchedFilters) {
+    private boolean hasNutritionFilters(RecipeFilters filters) {
+        return filters.getMaxCalories() != null || filters.getMinProtein() != null 
+            || filters.getMaxFat() != null || filters.getMaxCarbs() != null 
+            || filters.getMinFiber() != null || filters.getMaxSugar() != null 
+            || filters.getMaxSodium() != null;
+    }
+
+    private Map<String, Object> metadata(RecipeCandidate candidate, RecipeDocument document, int matchedFilters, double titleRelevance) {
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put("qdrantScore", round(candidate.qdrantScore()));
+        metadata.put("titleRelevance", round(titleRelevance));
         metadata.put("cookTime", document.cookTime());
         metadata.put("mainProtein", document.mainProtein());
         metadata.put("ingredientCount", document.ingredientCount());
@@ -158,6 +189,25 @@ public class RecipeRankingService {
         }
         long hits = ingredientTerms.stream().filter(queryTerms::contains).count();
         return Math.min(1.0, hits / (double) Math.min(queryTerms.size(), ingredientTerms.size()));
+    }
+
+    private double titleRelevance(String rawQuery, Set<String> queryTerms, RecipeDocument document) {
+        String title = document.itemName();
+        if (title == null || title.isBlank()) {
+            return 0.0;
+        }
+
+        String normalizedTitle = normalizeText(title);
+        String normalizedQuery = normalizeText(rawQuery);
+
+        if (normalizedTitle.equals(normalizedQuery)) return 1.0;
+        if (normalizedTitle.contains(normalizedQuery) || normalizedQuery.contains(normalizedTitle)) return 0.8;
+
+        Set<String> titleTerms = tokenize(title);
+        if (titleTerms.isEmpty() || queryTerms.isEmpty()) return 0.0;
+
+        long hits = titleTerms.stream().filter(queryTerms::contains).count();
+        return Math.min(1.0, hits / (double) Math.min(queryTerms.size(), titleTerms.size()));
     }
 
     private List<String> ingredientNames(List<Ingredient> ingredients) {
@@ -202,6 +252,14 @@ public class RecipeRankingService {
 
     private boolean lessOrEqualIfPresent(Number actual, Integer max) {
         return max == null || (actual != null && actual.doubleValue() <= max);
+    }
+
+    private boolean lessOrEqualIfPresent(Number actual, Double max) {
+        return max == null || (actual != null && actual.doubleValue() <= max);
+    }
+
+    private boolean greaterOrEqualIfPresent(Number actual, Double min) {
+        return min == null || (actual != null && actual.doubleValue() >= min);
     }
 
     private boolean anyIfPresent(Collection<String> expected, Collection<String> actual) {
