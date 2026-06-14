@@ -19,5 +19,5 @@ INSTRUCTION:
 
     mvn spring-boot:run
 
-    Invoke-RestMethod -Method Post -Uri "http://localhost:8080/apply?id=8120&type=llm"
-    Invoke-RestMethod -Method Post -Uri "http://localhost:8080/apply?id=8100&type=db"
+    Invoke-RestMethod -Method Post -Uri "http://localhost:8080/apply?id=localhost:8120&type=llm"
+    Invoke-RestMethod -Method Post -Uri "http://localhost:8080/apply?id=localhost:8100&type=db"
