@@ -30,7 +30,10 @@ public class RecipeSearchService {
     public List<RecipeQueryResult> search(RecipeQuery query) {
         if (query == null || query.getRecipeQuery() == null || query.getRecipeQuery().isBlank()) {
             log.warn("Search called with null or blank query");
-            return List.of();
+            // ---- kduy fix from here ---
+            // return List.of();
+            throw new IllegalArgumentException("Blank query");
+            // --- to here ---
         }
 
         long startTime = System.currentTimeMillis();

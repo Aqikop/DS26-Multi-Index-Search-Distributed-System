@@ -34,7 +34,10 @@ public class RequestStorage {
     }
 
     public Set<String> getRequestList() {
-        return requestStatus.keySet();
+        // ---- kduy fix from here ---
+        // return requestStatus.keySet();
+        return new java.util.HashSet<>(requestStatus.keySet());
+        // --- to here ---
     }
 
     public boolean storeRequest(String id, UserRequest request) {
@@ -57,8 +60,12 @@ public class RequestStorage {
                 HttpHeaders headers = new HttpHeaders();
                 headers.setContentType(MediaType.APPLICATION_JSON);
                 HttpEntity<UserRequest> entity = new HttpEntity<>(request, headers);
+                // ---- kduy fix from here ---
+                // Boolean result = restTemplate.postForObject(targetUrl, entity, Boolean.class);
+                // if (result) {System.out.println("Broadcast request done.");}
                 Boolean result = restTemplate.postForObject(targetUrl, entity, Boolean.class);
-                if (result) {System.out.println("Broadcast request done.");}
+                if (Boolean.TRUE.equals(result)) {System.out.println("Broadcast request done.");}
+                // --- to here ---
             } catch (Exception e) {System.out.println("Broadcast request failed.");}
         }
     }
@@ -68,7 +75,10 @@ public class RequestStorage {
     }
 
     public void setNode(List<String> list) {
-        this.nodesList.clear();
+        // ---- kduy fix from here ---
+        // this.nodesList.clear();
+        this.nodesList.retainAll(list);
+        // --- to here ---
         this.nodesList.addAll(list);
     }
 

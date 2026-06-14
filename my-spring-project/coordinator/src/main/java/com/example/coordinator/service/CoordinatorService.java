@@ -58,6 +58,7 @@ public class CoordinatorService {
         return storage.getRequest(id); 
     }
 
+
     public boolean copy(UserRequest request) { 
         return storage.storeRequest(request.getId(), request);
     }

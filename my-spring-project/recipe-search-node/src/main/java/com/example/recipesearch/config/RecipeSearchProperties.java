@@ -19,9 +19,11 @@ public record RecipeSearchProperties(
         if (qdrant == null) {
             throw new IllegalArgumentException("Qdrant configuration (recipe-search.qdrant) is missing in application.yml");
         }
-        if (candidateLimit == 0) candidateLimit = 100;
-        if (topK == 0) topK = 10;
-        if (queryTimeoutSeconds == 0) queryTimeoutSeconds = 60;
+        // ---- kduy fix from here ---
+        // if (candidateLimit == 0) candidateLimit = 100;
+        // if (topK == 0) topK = 10;
+        // if (queryTimeoutSeconds == 0) queryTimeoutSeconds = 60;
+        // --- to here ---
     }
 
     public record Qdrant(

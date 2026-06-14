@@ -5,6 +5,9 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
+// ---- kduy fix from here ---
+import java.util.concurrent.atomic.AtomicBoolean;
+// --- to here ----
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.springframework.beans.factory.annotation.Value;
@@ -30,7 +33,10 @@ public class ConsensusService {
     private final Set<String> nodesList = ConcurrentHashMap.newKeySet();
     @Value("${server.port:8080}")
     private String nodeId; // do I need to sync???
-    private volatile boolean voted;
+    // ---- kduy fix from here ---
+    // private volatile boolean voted;
+    private final AtomicBoolean voted = new AtomicBoolean(false);
+    // --- to here ----
     
     public volatile String nodeStatus; // do I need to sync???
     public volatile String leaderId; // do I need to sync???
@@ -42,7 +48,10 @@ public class ConsensusService {
         this.processingService = processingService;
         this.storage = storage;
 
-        this.voted = false;
+        // ---- kduy fix from here ---
+        // this.voted = false;
+        this.voted.set(false);
+        // --- to here ----
         this.nodeStatus = "follower";
         this.leaderId = null;
         // this.term = 0;
@@ -58,16 +67,25 @@ public class ConsensusService {
         //         this.term += 1;
         //         this.voted = false;
         //     }
+        // ---- kduy fix from here ---
+        // if (this.term <= request.getTerm() && requestCount <= request.getRequestCount()) {
+        //     if(this.term < request.getTerm()) {
+        //         this.term += 1;
+        //         this.voted = false;
+        //     }
         if (this.term.get() <= request.getTerm() && requestCount <= request.getRequestCount()) {
             if(this.term.get() < request.getTerm()) {
                 this.term.set(request.getTerm());
-                this.voted = false;
+                this.voted.set(false);
             }
-        // ---- kduy fix to here ---
+        // --- to here ---
             int candidateRequestCount = request.getRequestCount();
             
-            if (candidateRequestCount >= 3 && !this.voted) {
-                this.voted = true;
+            // ---- kduy fix from here ---
+            // if (candidateRequestCount >= 3 && !this.voted) {
+            //     this.voted = true;
+            if (candidateRequestCount >= 3 && this.voted.compareAndSet(false, true)) {
+            // --- to here ---
                 this.nodeStatus = "follower";
                 processingService.setIsLeader(false);
                 return true;
@@ -104,7 +122,7 @@ public class ConsensusService {
                 validity = restTemplate.postForObject(urlTemplate, null, Boolean.class);
             } catch (RestClientException e) { System.out.println("Ping failed.");}
 
-            if (validity) {
+            if (Boolean.TRUE.equals(validity)) {
                 nodesList.add(id);
                 storage.addNode(id);
 
@@ -210,8 +228,12 @@ public class ConsensusService {
                             .encode()
                             .toUriString();
 
+                    // ---- kduy fix from here ---
+                    // Boolean response = restTemplate.postForObject(urlTemplate, null, Boolean.class);
+                    // if (!response) {
                     Boolean response = restTemplate.postForObject(urlTemplate, null, Boolean.class);
-                    if (!response) {
+                    if (response == null || !response) {
+                    // --- to here ---
                         nodeStatus = "follower"; 
                         processingService.setIsLeader(false);
                         }
@@ -230,8 +252,19 @@ public class ConsensusService {
             else {
                 this.nodeStatus = "candidate";
                 processingService.setIsLeader(false);
-                while (this.nodeStatus.equals("candidate")) {
-                    try {
+                // ---- kduy fix from here ---
+                // while (this.nodeStatus.equals("candidate")) {
+                new Thread(this::runElection).start();
+                // --- to here ---
+            }
+        }
+    }
+
+    // ---- kduy fix from here ---
+    private void runElection() {
+        while (this.nodeStatus.equals("candidate")) {
+    // --- to here ---
+            try {
                         long randomDelay = ThreadLocalRandom.current().nextLong(1000, 2000 + 1);
                         Thread.sleep(randomDelay);
                     } catch (InterruptedException ignore) {}
@@ -240,7 +273,10 @@ public class ConsensusService {
 
                     // this.term = term + 1;
                     this.term.incrementAndGet();
-                    this.voted = false;
+                    // ---- kduy fix from here ---
+                    // this.voted = false;
+                    this.voted.set(false);
+                    // --- to here ---
                     int vote = 1;
 
                     VoteRequest request = new VoteRequest();
@@ -264,20 +300,24 @@ public class ConsensusService {
                             headers.setContentType(MediaType.APPLICATION_JSON);
                             HttpEntity<VoteRequest> entity = new HttpEntity<>(request, headers);
                             Boolean result = restTemplate.postForObject(targetUrl, entity, Boolean.class);
-                            if (result) {vote = vote + 1;}
+                            // ---- kduy fix from here ---
+                            // if (result) {vote = vote + 1;}
+                            if (Boolean.TRUE.equals(result)) {vote = vote + 1;}
+                            // --- to here ---
                         } catch (RestClientException e) { System.out.println("Ask for vote failed.");}
                     }
 
                     if (vote > ((nodesList.size() + 1) / 2) && this.nodeStatus.equals("candidate")) {
                         this.nodeStatus = "leader";
                         processingService.setIsLeader(true);
-                        processingService.processingThread();
+                        // ---- kduy fix from here ---
+                        // processingService.processingThread();
+                        processingService.processingThread(); // It has internal check to avoid dup threads
+                        // --- to here ---
                         processingService.updateQueue();
                         System.out.println("Won");
                     }
                     else {System.out.println("Lost");}
                 }
-            }
-        }
     }
 }

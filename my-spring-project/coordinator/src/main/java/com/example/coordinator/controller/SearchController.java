@@ -44,10 +44,12 @@ public class SearchController {
         return coordinatorService.get(id);
     } 
 
-    @GetMapping("/gettest") // just for test TO DO: delete
+    @GetMapping("/gettest") // just for test
     public UserRequest getTest(@RequestParam String id) {
         return coordinatorService.getTest(id);
     }
+
+
 
     @PostMapping("/copy") 
     public boolean copy(@RequestBody UserRequest request) { 
@@ -75,8 +77,12 @@ public class SearchController {
         return consensus.apply(id, type);
     }
 
+    // ---- kduy fix from here ---
+    // @PostMapping("/follow") 
+    // public boolean apply(@RequestParam String id) { 
     @PostMapping("/follow") 
-    public boolean apply(@RequestParam String id) { 
+    public boolean follow(@RequestParam String id) { 
+    // --- to here ---
         return consensus.follow(id);
     }
 }

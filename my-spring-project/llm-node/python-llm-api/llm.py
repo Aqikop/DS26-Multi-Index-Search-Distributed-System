@@ -423,7 +423,10 @@ def _format_recipe_point(point, rank: int, user_ingredients: list[str] | None) -
         import json
         try:
             payload = json.loads(payload)
-        except:
+        # ---- kduy fix from here ---
+        # except:
+        except (json.JSONDecodeError, TypeError, ValueError):
+        # --- to here ----
             payload = {}
 
         
@@ -442,11 +445,18 @@ def _format_recipe_point(point, rank: int, user_ingredients: list[str] | None) -
             f"{nutrition.get('carbs', 'N/A')}g carbs\n"
         )
 
+    # ---- kduy fix from here ---
+    # time_str = (
+    #     f"{cook_time} min"       if cook_time and 0 < cook_time <= 300 else
+    #     f"{cook_time // 60} hrs" if cook_time and cook_time > 300      else
+    #     "not specified"
+    # )
     time_str = (
-        f"{cook_time} min"       if cook_time and 0 < cook_time <= 300 else
-        f"{cook_time // 60} hrs" if cook_time and cook_time > 300      else
+        f"{cook_time} min"       if cook_time and 0 < cook_time <= 119 else
+        f"{cook_time // 60} hrs {cook_time % 60} mins".replace(" 0 mins", "") if cook_time and cook_time > 119 else
         "not specified"
     )
+    # --- to here ----
 
     overlap_line = ""
     if user_ingredients:

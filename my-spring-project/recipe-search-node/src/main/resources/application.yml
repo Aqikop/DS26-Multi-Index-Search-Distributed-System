@@ -4,7 +4,7 @@ server:
 recipe-search:
   candidate-limit: 100
   top-k: 10
-  query-timeout-seconds: 60
+  query-timeout-seconds: 180
   qdrant:
     host: ${QDRANT_HOST:}
     port: ${QDRANT_GRPC_PORT:}

@@ -347,7 +347,10 @@ public class RecipeRankingService {
                 continue;
             }
             for (String token : TOKEN_SPLIT.split(text.toLowerCase(Locale.ROOT))) {
-                if (token.length() > MIN_TOKEN_LENGTH) {
+                // ---- kduy fix from here ---
+                // if (token.length() > MIN_TOKEN_LENGTH) {
+                if (token.length() >= MIN_TOKEN_LENGTH) {
+                // --- to here ---
                     terms.add(token);
                 }
             }
