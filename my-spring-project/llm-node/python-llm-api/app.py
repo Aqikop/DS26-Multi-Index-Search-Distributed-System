@@ -25,6 +25,19 @@ llm = load_llm_module()
 app = FastAPI(title="Food LLM API")
 
 
+# ---- warmup ---
+@app.on_event("startup")
+def warmup():
+    print("Starting LLM warmup...")
+    try:
+        llm.decompose_routing("warmup")
+        print("LLM warmup completed successfully.")
+    except Exception as e:
+        print(f"LLM warmup warning (ignored): {e}")
+# --- warmup ----
+
+
+
 # ---- kduy fix here ---
 # class DecomposeRequest(BaseModel):
 #     userQuery: str
