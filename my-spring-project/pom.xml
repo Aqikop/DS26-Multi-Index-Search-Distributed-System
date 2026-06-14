@@ -19,6 +19,8 @@
     <modules>
         <module>shared-models</module>
         <module>recipe-search-node</module>
+        <module>llm-node</module>
+        <module>coordinator</module>
     </modules>
 
     <properties>

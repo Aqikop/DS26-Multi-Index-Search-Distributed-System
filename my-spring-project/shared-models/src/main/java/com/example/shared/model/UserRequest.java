@@ -1,6 +1,7 @@
 package com.example.shared.model;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.fasterxml.jackson.databind.annotation.JsonNaming;
 
@@ -11,7 +12,8 @@ public class UserRequest {
     private StatusState state;
     private String userQuery;
     private String queriesForDb;
-    private String listOfResult;
+    @JsonProperty("list_of_result")
+    private String listOfResults;
     private String result;
 
     public UserRequest() {}
@@ -28,8 +30,8 @@ public class UserRequest {
     public String getQueriesForDb() { return queriesForDb; }
     public void setQueriesForDb(String queriesForDb) { this.queriesForDb = queriesForDb; }
 
-    public String getListOfResult() { return listOfResult; }
-    public void setListOfResult(String listOfResult) { this.listOfResult = listOfResult; }
+    public String getListOfResults() { return listOfResults; }
+    public void setListOfResults(String listOfResults) { this.listOfResults = listOfResults; }
 
     public String getResult() { return result; }
     public void setResult(String result) { this.result = result; }

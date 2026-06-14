@@ -1,14 +1,15 @@
 server:
-  port: 8081
+  port: 8100
 
 recipe-search:
   candidate-limit: 100
   top-k: 10
+  query-timeout-seconds: 60
   qdrant:
-    host: ${QDRANT_HOST:cf19a9b2-fef9-49a9-96b2-003c18348045.eu-central-1-0.aws.cloud.qdrant.io}
-    port: ${QDRANT_GRPC_PORT:6334}
-    tls: ${QDRANT_TLS:true}
+    host: ${QDRANT_HOST:}
+    port: ${QDRANT_GRPC_PORT:}
+    tls: ${QDRANT_TLS:}
     api-key: ${QDRANT_API_KEY:}
     collection: recipes_nutrition
     vector-name: ${QDRANT_RECIPE_VECTOR_NAME:}
-    inference-model: ${QDRANT_INFERENCE_MODEL:sentence-transformers/all-minilm-l6-v2}
+    inference-model: ${QDRANT_INFERENCE_MODEL:}

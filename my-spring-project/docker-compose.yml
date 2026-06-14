@@ -1,0 +1,118 @@
+version: '3.8'
+
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  python-llm-api:
+    build:
+      context: ./llm-node/python-llm-api
+    ports:
+      - "5000:5000"
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - QDRANT_HOST=qdrant
+      - QDRANT_GRPC_PORT=6334
+    depends_on:
+      - qdrant
+
+  recipe-node-1:
+    build:
+      context: .
+      dockerfile: recipe-search-node/Dockerfile
+    ports:
+      - "8100:8100"
+    environment:
+      - SERVER_PORT=8100
+      - QDRANT_HOST=qdrant
+      - QDRANT_GRPC_PORT=6334
+    depends_on:
+      - qdrant
+
+  recipe-node-2:
+    build:
+      context: .
+      dockerfile: recipe-search-node/Dockerfile
+    ports:
+      - "8101:8101"
+    environment:
+      - SERVER_PORT=8101
+      - QDRANT_HOST=qdrant
+      - QDRANT_GRPC_PORT=6334
+    depends_on:
+      - qdrant
+
+  recipe-node-3:
+    build:
+      context: .
+      dockerfile: recipe-search-node/Dockerfile
+    ports:
+      - "8102:8102"
+    environment:
+      - SERVER_PORT=8102
+      - QDRANT_HOST=qdrant
+      - QDRANT_GRPC_PORT=6334
+    depends_on:
+      - qdrant
+
+  llm-node-1:
+    build:
+      context: .
+      dockerfile: llm-node/Dockerfile
+    ports:
+      - "8120:8120"
+    environment:
+      - SERVER_PORT=8120
+      - PYTHON_LLM_API_BASE_URL=http://python-llm-api:5000
+    depends_on:
+      - python-llm-api
+
+  llm-node-2:
+    build:
+      context: .
+      dockerfile: llm-node/Dockerfile
+    ports:
+      - "8121:8121"
+    environment:
+      - SERVER_PORT=8121
+      - PYTHON_LLM_API_BASE_URL=http://python-llm-api:5000
+    depends_on:
+      - python-llm-api
+
+  coordinator-1:
+    build:
+      context: .
+      dockerfile: coordinator/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - SERVER_PORT=8080
+    depends_on:
+      - recipe-node-1
+      - recipe-node-2
+      - recipe-node-3
+      - llm-node-1
+      - llm-node-2
+
+  coordinator-2:
+    build:
+      context: .
+      dockerfile: coordinator/Dockerfile
+    ports:
+      - "8081:8081"
+    environment:
+      - SERVER_PORT=8081
+    depends_on:
+      - recipe-node-1
+      - recipe-node-2
+      - recipe-node-3
+      - llm-node-1
+      - llm-node-2
+
+volumes:
+  qdrant_data:

@@ -41,7 +41,7 @@ public class RecipeFilters {
     @JsonIgnore
     public List<Ingredient> getIngredients() {
         if (ingredientsList == null) {
-            return null;
+            return List.of();
         }
         List<Ingredient> list = new ArrayList<>(ingredientsList.size());
         for (int i = 0; i < ingredientsList.size(); i++) {

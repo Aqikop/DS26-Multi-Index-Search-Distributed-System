@@ -57,11 +57,11 @@ public class QdrantRecipeRepository {
         }
 
         try {
-            List<ScoredPoint> points = qdrantClient.queryAsync(request.build()).get(60, TimeUnit.SECONDS);
+            List<ScoredPoint> points = qdrantClient.queryAsync(request.build()).get(properties.queryTimeoutSeconds(), TimeUnit.SECONDS);
             List<RecipeCandidate> candidates = new ArrayList<>(points.size());
             for (ScoredPoint point : points) {
                 candidates.add(new RecipeCandidate(
-                        point.getId().toString(),
+                        point.getId().hasUuid() ? point.getId().getUuid() : String.valueOf(point.getId().getNum()),
                         point.getScore(),
                         convertPayload(point.getPayloadMap())
                 ));

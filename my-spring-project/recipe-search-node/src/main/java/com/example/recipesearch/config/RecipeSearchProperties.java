@@ -12,18 +12,16 @@ import jakarta.validation.constraints.NotBlank;
 public record RecipeSearchProperties(
         Qdrant qdrant,
         @Min(1) @Max(1000) int candidateLimit,
-        @Min(1) @Max(100) int topK
+        @Min(1) @Max(100) int topK,
+        @Min(1) @Max(300) int queryTimeoutSeconds
 ) {
     public RecipeSearchProperties {
         if (qdrant == null) {
             throw new IllegalArgumentException("Qdrant configuration (recipe-search.qdrant) is missing in application.yml");
         }
-        if (candidateLimit == 0) {
-            candidateLimit = 100;
-        }
-        if (topK == 0) {
-            topK = 10;
-        }
+        if (candidateLimit == 0) candidateLimit = 100;
+        if (topK == 0) topK = 10;
+        if (queryTimeoutSeconds == 0) queryTimeoutSeconds = 60;
     }
 
     public record Qdrant(

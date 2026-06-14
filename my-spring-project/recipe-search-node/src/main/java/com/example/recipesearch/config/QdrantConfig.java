@@ -13,15 +13,16 @@ public class QdrantConfig {
 
     @Bean(destroyMethod = "close")
     QdrantClient qdrantClient(RecipeSearchProperties properties) {
-        ManagedChannelBuilder<?> channelBuilder = ManagedChannelBuilder.forAddress(properties.qdrant().host(), properties.qdrant().port());
+        var qdrant = properties.qdrant();
+        ManagedChannelBuilder<?> channelBuilder = ManagedChannelBuilder.forAddress(qdrant.host(), qdrant.port());
 
-        if (properties.qdrant().tls()) channelBuilder.useTransportSecurity();
+        if (qdrant.tls()) channelBuilder.useTransportSecurity();
         else channelBuilder.usePlaintext();
 
         ManagedChannel channel = channelBuilder.build();
         QdrantGrpcClient.Builder grpcBuilder = QdrantGrpcClient.newBuilder(channel, true);
-        if (properties.qdrant().apiKey() != null && !properties.qdrant().apiKey().isBlank()) {
-            grpcBuilder.withApiKey(properties.qdrant().apiKey());
+        if (qdrant.apiKey() != null && !qdrant.apiKey().isBlank()) {
+            grpcBuilder.withApiKey(qdrant.apiKey());
         }
         return new QdrantClient(grpcBuilder.build());
     }

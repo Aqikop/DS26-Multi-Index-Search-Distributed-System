@@ -16,11 +16,26 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 @Service
 public class RecipeRankingService {
+    private static final Logger log = LoggerFactory.getLogger(RecipeRankingService.class);
     private static final Pattern TOKEN_SPLIT = Pattern.compile("[^a-z0-9]+");
+    private static final double WEIGHT_QDRANT_SCORE = 0.40;
+    private static final double WEIGHT_TITLE_RELEVANCE = 0.20;
+    private static final double WEIGHT_INGREDIENT_OVERLAP = 0.20;
+    private static final double WEIGHT_COOK_TIME = 0.10;
+    private static final double WEIGHT_PROTEIN_RELEVANCE = 0.10;
+    private static final double COOK_TIME_CEILING = 1.2;
+    private static final double PARTIAL_PROTEIN_SCORE = 0.75;
+    private static final double PARTIAL_TITLE_SCORE = 0.8;
+    private static final int MIN_TOKEN_LENGTH = 2;
+    private static final double HIGH_PROTEIN_THRESHOLD = 20.0;
+    private static final double LOW_CARB_THRESHOLD = 20.0;
+    private static final double LOW_CALORIE_THRESHOLD = 400.0;
 
     private final RecipePayloadMapper payloadMapper;
 
@@ -33,13 +48,17 @@ public class RecipeRankingService {
         String rawQuery = query.getRecipeQuery() != null ? query.getRecipeQuery() : "";
         Set<String> queryTerms = tokenize(rawQuery);
 
-        return candidates.stream()
+        List<RecipeQueryResult> results = candidates.stream()
                 .map(candidate -> new RankedCandidate(candidate, payloadMapper.toDocument(candidate.payload())))
                 .filter(candidate -> matchesFilters(candidate.document(), filters))
                 .map(candidate -> toRankedResult(candidate, filters, queryTerms, rawQuery))
                 .sorted(Comparator.comparing(RecipeQueryResult::getScore, Comparator.nullsLast(Double::compareTo)).reversed())
                 .limit(topK)
                 .toList();
+
+        log.info("Ranked {} candidates → {} results (topK={}, query='{}')",
+                candidates.size(), results.size(), topK, rawQuery);
+        return results;
     }
 
     private RecipeQueryResult toRankedResult(
@@ -60,11 +79,11 @@ public class RecipeRankingService {
 
         // Adjust weights to include titleRelevance
         double finalScore =
-                (qdrantScore * 0.40)
-                        + (titleRelevance * 0.20)
-                        + (ingredientOverlap * 0.20)
-                        + (cookTimePreference * 0.10)
-                        + (proteinRelevance * 0.10);
+                (qdrantScore * WEIGHT_QDRANT_SCORE)
+                        + (titleRelevance * WEIGHT_TITLE_RELEVANCE)
+                        + (ingredientOverlap * WEIGHT_INGREDIENT_OVERLAP)
+                        + (cookTimePreference * WEIGHT_COOK_TIME)
+                        + (proteinRelevance * WEIGHT_PROTEIN_RELEVANCE);
 
         RecipeQueryResult result = new RecipeQueryResult();
         result.setItemName(document.itemName());
@@ -82,12 +101,13 @@ public class RecipeRankingService {
         if (filters == null || filters.getIngredients() == null || filters.getIngredients().isEmpty()) return recipeIngredients;
 
         List<Ingredient> userIngredients = filters.getIngredients();
-        Map<String, Double> userInventory = new LinkedHashMap<>();
+        record UserIngredientEntry(Double quantity, String unit) {}
+        Map<String, UserIngredientEntry> userInventory = new LinkedHashMap<>();
         
         for (Ingredient ui : userIngredients) {
             if (ui.getName() == null) continue;
             String normName = normalizeText(ui.getName());
-            userInventory.put(normName, ui.getQuantity());
+            userInventory.put(normName, new UserIngredientEntry(ui.getQuantity(), ui.getUnit()));
         }
 
         List<Ingredient> missing = new ArrayList<>();
@@ -97,14 +117,19 @@ public class RecipeRankingService {
             
             boolean found = false;
             // Fuzzy match: check if recipe ingredient name is contained in user ingredient name or vice versa
-            for (Map.Entry<String, Double> entry : userInventory.entrySet()) {
+            for (Map.Entry<String, UserIngredientEntry> entry : userInventory.entrySet()) {
                 if (normRecipeName.contains(entry.getKey()) || entry.getKey().contains(normRecipeName)) {
                     found = true;
-                    // Check quantity if available
-                    if (ri.getQuantity() != null && entry.getValue() != null) {
-                        double missingQty = ri.getQuantity() - entry.getValue();
-                        if (missingQty > 0) {
-                            missing.add(new Ingredient(ri.getName(), missingQty, ri.getUnit()));
+                    UserIngredientEntry userEntry = entry.getValue();
+                    if (ri.getQuantity() != null && userEntry.quantity() != null) {
+                        // Only compare quantities when units match or are both absent
+                        String riUnit = normalizeText(ri.getUnit());
+                        String userUnit = normalizeText(userEntry.unit());
+                        if (riUnit.equals(userUnit) || riUnit.isEmpty() || userUnit.isEmpty()) {
+                            double missingQty = ri.getQuantity() - userEntry.quantity();
+                            if (missingQty > 0) {
+                                missing.add(new Ingredient(ri.getName(), missingQty, ri.getUnit()));
+                            }
                         }
                     }
                     break;
@@ -117,7 +142,7 @@ public class RecipeRankingService {
         return missing;
     }
 
-    public boolean matchesFilters(RecipeDocument document, RecipeFilters filters) {
+    private boolean matchesFilters(RecipeDocument document, RecipeFilters filters) {
         if (filters == null) {
             return true;
         }
@@ -138,20 +163,41 @@ public class RecipeRankingService {
             return !hasNutritionFilters(filters);
         }
 
-        return lessOrEqualIfPresent(document.nutrition().getCalories(), filters.getMaxCalories())
+        boolean nutritionMatch = lessOrEqualIfPresent(document.nutrition().getCalories(), filters.getMaxCalories())
                 && greaterOrEqualIfPresent(document.nutrition().getProtein(), filters.getMinProtein())
                 && lessOrEqualIfPresent(document.nutrition().getFat(), filters.getMaxFat())
                 && lessOrEqualIfPresent(document.nutrition().getCarbs(), filters.getMaxCarbs())
                 && greaterOrEqualIfPresent(document.nutrition().getFiber(), filters.getMinFiber())
                 && lessOrEqualIfPresent(document.nutrition().getSugar(), filters.getMaxSugar())
                 && lessOrEqualIfPresent(document.nutrition().getSodiumMg(), filters.getMaxSodium());
+
+        if (!nutritionMatch) return false;
+
+        // Boolean diet-type filters
+        if (Boolean.TRUE.equals(filters.getIsHighProtein())
+                && (document.nutrition().getProtein() == null || document.nutrition().getProtein() < HIGH_PROTEIN_THRESHOLD)) {
+            return false;
+        }
+        if (Boolean.TRUE.equals(filters.getIsLowCarb())
+                && (document.nutrition().getCarbs() == null || document.nutrition().getCarbs() > LOW_CARB_THRESHOLD)) {
+            return false;
+        }
+        if (Boolean.TRUE.equals(filters.getIsLowCalorie())
+                && (document.nutrition().getCalories() == null || document.nutrition().getCalories() > LOW_CALORIE_THRESHOLD)) {
+            return false;
+        }
+
+        return true;
     }
 
     private boolean hasNutritionFilters(RecipeFilters filters) {
         return filters.getMaxCalories() != null || filters.getMinProtein() != null 
             || filters.getMaxFat() != null || filters.getMaxCarbs() != null 
             || filters.getMinFiber() != null || filters.getMaxSugar() != null 
-            || filters.getMaxSodium() != null;
+            || filters.getMaxSodium() != null
+            || Boolean.TRUE.equals(filters.getIsHighProtein())
+            || Boolean.TRUE.equals(filters.getIsLowCarb())
+            || Boolean.TRUE.equals(filters.getIsLowCalorie());
     }
 
     private Map<String, Object> metadata(RecipeCandidate candidate, RecipeDocument document, int matchedFilters, double titleRelevance) {
@@ -201,7 +247,7 @@ public class RecipeRankingService {
         String normalizedQuery = normalizeText(rawQuery);
 
         if (normalizedTitle.equals(normalizedQuery)) return 1.0;
-        if (normalizedTitle.contains(normalizedQuery) || normalizedQuery.contains(normalizedTitle)) return 0.8;
+        if (normalizedTitle.contains(normalizedQuery) || normalizedQuery.contains(normalizedTitle)) return PARTIAL_TITLE_SCORE;
 
         Set<String> titleTerms = tokenize(title);
         if (titleTerms.isEmpty() || queryTerms.isEmpty()) return 0.0;
@@ -226,7 +272,7 @@ public class RecipeRankingService {
             return 1.0;
         }
         double ratio = cookTime.doubleValue() / filters.getMaxCookTime();
-        return Math.max(0.0, Math.min(1.0, 1.2 - ratio));
+        return Math.max(0.0, Math.min(1.0, COOK_TIME_CEILING - ratio));
     }
 
     private double proteinRelevance(RecipeFilters filters, RecipeDocument document, Set<String> queryTerms) {
@@ -239,7 +285,7 @@ public class RecipeRankingService {
                 && normalizeText(filters.getMainProtein()).equals(normalizedProtein)) {
             return 1.0;
         }
-        return queryTerms.contains(normalizedProtein) ? 0.75 : 0.0;
+        return queryTerms.contains(normalizedProtein) ? PARTIAL_PROTEIN_SCORE : 0.0;
     }
 
     private boolean equalsIfPresent(String expected, String actual) {
@@ -279,6 +325,7 @@ public class RecipeRankingService {
     }
 
     private Set<String> normalizeAll(Collection<String> values) {
+        if (values == null) return Set.of();
         Set<String> normalized = new LinkedHashSet<>();
         for (String value : values) {
             normalized.add(normalizeText(value));
@@ -300,7 +347,7 @@ public class RecipeRankingService {
                 continue;
             }
             for (String token : TOKEN_SPLIT.split(text.toLowerCase(Locale.ROOT))) {
-                if (token.length() > 2) {
+                if (token.length() > MIN_TOKEN_LENGTH) {
                     terms.add(token);
                 }
             }
