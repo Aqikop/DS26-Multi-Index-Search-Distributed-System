@@ -54,7 +54,11 @@ public class RequestStorage {
         for (String node : nodesList) {
             try {
                 // String targetUrl = "http://localhost:" + node + "/copy";
-                String targetUrl = "http://" + node + "/copy";
+                // ---- kduy fix from here ---
+                // // String targetUrl = "http://localhost:" + node + "/copy";
+                // String targetUrl = "http://" + node + "/copy";
+                String targetUrl = node.contains(":") || node.contains(".") || node.equalsIgnoreCase("localhost") ? "http://" + node + "/copy" : "http://localhost:" + node + "/copy";
+                // --- to here ---
                 HttpHeaders headers = new HttpHeaders();
                 headers.setContentType(MediaType.APPLICATION_JSON);
                 HttpEntity<UserRequest> entity = new HttpEntity<>(request, headers);

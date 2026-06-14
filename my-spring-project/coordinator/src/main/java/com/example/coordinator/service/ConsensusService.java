@@ -70,9 +70,8 @@ public class ConsensusService {
             int candidateRequestCount = request.getRequestCount();
             
             // ---- kduy fix from here ---
-            // if (candidateRequestCount >= 3 && !this.voted) {
-            //     this.voted = true;
-            if (candidateRequestCount >= 3 && this.voted.compareAndSet(false, true)) {
+            // if (candidateRequestCount >= 3 && this.voted.compareAndSet(false, true)) {
+            if (this.voted.compareAndSet(false, true)) {
             // --- to here ---
                 this.nodeStatus = "follower";
                 processingService.setIsLeader(false);
@@ -98,8 +97,11 @@ public class ConsensusService {
         if (nodeStatus.equals("leader")) {
             Boolean validity = false;
             try {
-                // String targetUrl = "http://localhost:" + id + "/ping";
-                String targetUrl = "http://" + id + "/ping";
+                // ---- kduy fix from here ---
+                // // String targetUrl = "http://localhost:" + id + "/ping";
+                // String targetUrl = "http://" + id + "/ping";
+                String targetUrl = formatUrl(id, "/ping");
+                // --- to here ---
                 String urlTemplate = UriComponentsBuilder.fromHttpUrl(targetUrl)
                         .queryParam("id", nodeId)
                         // .queryParam("term", this.term)
@@ -116,8 +118,11 @@ public class ConsensusService {
 
                 for (String node : nodesList) {
                     try {
-                        // String targetUrl = "http://localhost:" + id + "/join";
-                        String targetUrl = "http://" + node + "/join";
+                        // ---- kduy fix from here ---
+                        // // String targetUrl = "http://localhost:" + id + "/join";
+                        // String targetUrl = "http://" + node + "/join";
+                        String targetUrl = formatUrl(node, "/join");
+                        // --- to here ---
                         String urlTemplate = UriComponentsBuilder.fromHttpUrl(targetUrl)
                                 .queryParam("id", id)
                                 .encode()
@@ -150,8 +155,11 @@ public class ConsensusService {
     public boolean follow(String id) {
         if (id.equals(nodeId)) {return false;}
         try {
-            // String targetUrl = "http://localhost:" + node + "/join";
-            String targetUrl = "http://" + id + "/join";
+            // ---- kduy fix from here ---
+            // // String targetUrl = "http://localhost:" + node + "/join";
+            // String targetUrl = "http://" + id + "/join";
+            String targetUrl = formatUrl(id, "/join");
+            // --- to here ---
             String urlTemplate = UriComponentsBuilder.fromHttpUrl(targetUrl)
                     .queryParam("id", nodeId)
                     .encode()
@@ -183,8 +191,11 @@ public class ConsensusService {
             processingService.apply(id, type);
             for (String node : nodesList) {
                 try {
-                // String targetUrl = "http://localhost:" + node + "/apply";
-                String targetUrl = "http://" + node + "/apply";
+                // ---- kduy fix from here ---
+                // // String targetUrl = "http://localhost:" + node + "/apply";
+                // String targetUrl = "http://" + node + "/apply";
+                String targetUrl = formatUrl(node, "/apply");
+                // --- to here ---
                 String urlTemplate = UriComponentsBuilder.fromHttpUrl(targetUrl)
                         .queryParam("id", id)
                         .queryParam("type", type)
@@ -206,9 +217,11 @@ public class ConsensusService {
         if (nodeStatus.equals("leader")) {
             for (String node : nodesList) {
                 try {
-                    // String targetUrl = "http://localhost:" + node + "/ping";
-                    String targetUrl = "http://" + node + "/ping";
-
+                    // ---- kduy fix from here ---
+                    // // String targetUrl = "http://localhost:" + node + "/ping";
+                    // String targetUrl = "http://" + node + "/ping";
+                    String targetUrl = formatUrl(node, "/ping");
+                    // --- to here ---
                     String urlTemplate = UriComponentsBuilder.fromHttpUrl(targetUrl)
                             .queryParam("id", nodeId)
                             // .queryParam("term", this.term)
@@ -278,8 +291,11 @@ public class ConsensusService {
                     // check status again maybe??
                     for (String node : nodesList) {
                         try {
-                            // String targetUrl = "http://localhost:" + node + "/vote";
-                            String targetUrl = "http://" + node + "/vote";
+                            // ---- kduy fix from here ---
+                            // // String targetUrl = "http://localhost:" + node + "/vote";
+                            // String targetUrl = "http://" + node + "/vote";
+                            String targetUrl = formatUrl(node, "/vote");
+                            // --- to here ---
                             HttpHeaders headers = new HttpHeaders();
                             headers.setContentType(MediaType.APPLICATION_JSON);
                             HttpEntity<VoteRequest> entity = new HttpEntity<>(request, headers);
@@ -299,4 +315,13 @@ public class ConsensusService {
                     else {System.out.println("Lost");}
                 }
     }
+
+    // ---- kduy fix from here ---
+    private String formatUrl(String idOrAddress, String path) {
+        if (idOrAddress.contains(":") || idOrAddress.contains(".") || idOrAddress.equalsIgnoreCase("localhost")) {
+            return "http://" + idOrAddress + path;
+        }
+        return "http://localhost:" + idOrAddress + path;
+    }
+    // --- to here ---
 }
