@@ -5,9 +5,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
-// ---- kduy fix from here ---
 import java.util.concurrent.atomic.AtomicBoolean;
-// --- to here ----
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.springframework.beans.factory.annotation.Value;
@@ -33,10 +31,8 @@ public class ConsensusService {
     private final Set<String> nodesList = ConcurrentHashMap.newKeySet();
     @Value("${server.port:8080}")
     private String nodeId; // do I need to sync???
-    // ---- kduy fix from here ---
     // private volatile boolean voted;
     private final AtomicBoolean voted = new AtomicBoolean(false);
-    // --- to here ----
     
     public volatile String nodeStatus; // do I need to sync???
     public volatile String leaderId; // do I need to sync???
@@ -48,10 +44,8 @@ public class ConsensusService {
         this.processingService = processingService;
         this.storage = storage;
 
-        // ---- kduy fix from here ---
         // this.voted = false;
         this.voted.set(false);
-        // --- to here ----
         this.nodeStatus = "follower";
         this.leaderId = null;
         // this.term = 0;
@@ -61,12 +55,6 @@ public class ConsensusService {
     public boolean vote(VoteRequest request) { 
         int requestCount = storage.getRequestList().size();
 
-        // ---- kduy fix here ---
-        // if (this.term <= request.getTerm() && requestCount <= request.getRequestCount()) {
-        //     if(this.term < request.getTerm()) {
-        //         this.term += 1;
-        //         this.voted = false;
-        //     }
         // ---- kduy fix from here ---
         // if (this.term <= request.getTerm() && requestCount <= request.getRequestCount()) {
         //     if(this.term < request.getTerm()) {
@@ -260,10 +248,8 @@ public class ConsensusService {
         }
     }
 
-    // ---- kduy fix from here ---
     private void runElection() {
         while (this.nodeStatus.equals("candidate")) {
-    // --- to here ---
             try {
                         long randomDelay = ThreadLocalRandom.current().nextLong(1000, 2000 + 1);
                         Thread.sleep(randomDelay);
@@ -273,10 +259,8 @@ public class ConsensusService {
 
                     // this.term = term + 1;
                     this.term.incrementAndGet();
-                    // ---- kduy fix from here ---
                     // this.voted = false;
                     this.voted.set(false);
-                    // --- to here ---
                     int vote = 1;
 
                     VoteRequest request = new VoteRequest();
@@ -300,20 +284,15 @@ public class ConsensusService {
                             headers.setContentType(MediaType.APPLICATION_JSON);
                             HttpEntity<VoteRequest> entity = new HttpEntity<>(request, headers);
                             Boolean result = restTemplate.postForObject(targetUrl, entity, Boolean.class);
-                            // ---- kduy fix from here ---
                             // if (result) {vote = vote + 1;}
                             if (Boolean.TRUE.equals(result)) {vote = vote + 1;}
-                            // --- to here ---
                         } catch (RestClientException e) { System.out.println("Ask for vote failed.");}
                     }
 
                     if (vote > ((nodesList.size() + 1) / 2) && this.nodeStatus.equals("candidate")) {
                         this.nodeStatus = "leader";
                         processingService.setIsLeader(true);
-                        // ---- kduy fix from here ---
-                        // processingService.processingThread();
-                        processingService.processingThread(); // It has internal check to avoid dup threads
-                        // --- to here ---
+                        processingService.processingThread(); 
                         processingService.updateQueue();
                         System.out.println("Won");
                     }

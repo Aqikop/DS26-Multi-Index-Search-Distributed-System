@@ -34,10 +34,8 @@ public class RequestStorage {
     }
 
     public Set<String> getRequestList() {
-        // ---- kduy fix from here ---
         // return requestStatus.keySet();
         return new java.util.HashSet<>(requestStatus.keySet());
-        // --- to here ---
     }
 
     public boolean storeRequest(String id, UserRequest request) {
@@ -75,10 +73,8 @@ public class RequestStorage {
     }
 
     public void setNode(List<String> list) {
-        // ---- kduy fix from here ---
         // this.nodesList.clear();
         this.nodesList.retainAll(list);
-        // --- to here ---
         this.nodesList.addAll(list);
     }
 

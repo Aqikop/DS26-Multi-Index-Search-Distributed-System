@@ -77,12 +77,9 @@ public class SearchController {
         return consensus.apply(id, type);
     }
 
-    // ---- kduy fix from here ---
-    // @PostMapping("/follow") 
-    // public boolean apply(@RequestParam String id) { 
     @PostMapping("/follow") 
     public boolean follow(@RequestParam String id) { 
-    // --- to here ---
+    // public boolean apply(@RequestParam String id) { 
         return consensus.follow(id);
     }
 }

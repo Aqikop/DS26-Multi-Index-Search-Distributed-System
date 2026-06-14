@@ -76,10 +76,8 @@ public class ProcessingService {
     }
 
     public void setLlmNodes(List<String> list) {
-        // ---- kduy fix from here ---
         // this.llmNodes.clear();
         this.llmNodes.retainAll(list);
-        // --- to here ----
         this.llmNodes.addAll(list);
     }
 
@@ -88,10 +86,8 @@ public class ProcessingService {
     }
 
     public void setDbNodes(List<String> list) {
-        // ---- kduy fix from here ---
         // this.dbNodes.clear();
         this.dbNodes.retainAll(list);
-        // --- to here ----
         this.dbNodes.addAll(list);
     }
 
@@ -171,7 +167,6 @@ public class ProcessingService {
                         RecipeQuery recipeQuery = request.getRecipeQuery();
                         List<RecipeQueryResult> result = sendToDBNode(recipeQuery);
 
-                        // ---- kduy fix here ---
                         // if (result != null) {
                         //     request.setState("unformatted results");
                         //     request.setRecipeQueryResults(result);
