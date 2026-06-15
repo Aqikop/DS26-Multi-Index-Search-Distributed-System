@@ -34,6 +34,7 @@ public class ConsensusService {
     
     public volatile String nodeStatus; // do I need to sync???
     public volatile String leaderId; // do I need to sync???
+    public volatile boolean leaderAlive;
     public AtomicInteger term;
 
     public ConsensusService(RestTemplate restTemplate, 
@@ -46,6 +47,7 @@ public class ConsensusService {
         this.nodeStatus = "follower";
         this.leaderId = null;
         this.term = new AtomicInteger(0);
+        this.leaderAlive = false;
         }
 
     /**
@@ -62,8 +64,9 @@ public class ConsensusService {
             }
             int candidateRequestCount = request.getRequestCount();
             
-            if (this.voted.compareAndSet(false, true)) {
+            if (candidateRequestCount >= requestCount && this.voted.compareAndSet(false, true)) {
                 this.nodeStatus = "follower";
+                this.leaderAlive = true;
                 processingService.setIsLeader(false);
                 return true;
                 } 
@@ -79,6 +82,7 @@ public class ConsensusService {
         // if (term >= this.term) {
         if (term >= this.term.get()) {
             this.leaderId = id;
+            this.leaderAlive = true;
             this.nodeStatus = "follower";
             processingService.setIsLeader(false);
             this.term.set(term);
@@ -249,7 +253,7 @@ public class ConsensusService {
         // System.out.println("Current Status: " + this.nodeStatus + " " + this.term);
         System.out.println("Current Status: " + this.nodeStatus + " " + this.term.get());
         if (this.nodeStatus.equals("follower")) {
-            if (this.leaderId != null) {this.leaderId = null;}
+            if (this.leaderAlive) {this.leaderAlive = false;}
             else {
                 this.nodeStatus = "candidate";
                 processingService.setIsLeader(false);
