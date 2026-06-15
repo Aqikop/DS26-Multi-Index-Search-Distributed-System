@@ -38,15 +38,6 @@ def warmup():
 
 
 
-# ---- kduy fix here ---
-# class DecomposeRequest(BaseModel):
-#     userQuery: str
-# 
-# 
-# class AnswerRequest(BaseModel):
-#     userQuery: str
-#     results: dict
-#     userIngredients: list[str] | None = None
 
 from pydantic import ConfigDict, Field
 
@@ -59,13 +50,10 @@ class AnswerRequest(BaseModel):
     user_query: str = Field(alias="userQuery", default="")
     recipe_query_results: list[dict] | None = Field(alias="recipeQueryResults", default=None)
     recipe_query: dict | None = Field(alias="recipeQuery", default=None)
-    # also keeping old fields for backwards compatibility or local testing
     results: dict | list | None = None
     user_ingredients: list[str] | None = Field(alias="userIngredients", default=None)
-# ---- to here kduy ---
 
 
-# ---- kduy fix here ---
 @app.post("/decompose")
 def decompose(request: DecomposeRequest):
     try:
@@ -92,4 +80,3 @@ def answer(request: AnswerRequest):
         return {"answer": final_answer}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-# ---- to here kduy ---

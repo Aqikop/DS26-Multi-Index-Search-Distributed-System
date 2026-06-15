@@ -18,13 +18,11 @@ import com.example.coordinator.model.UserRequest;
 public class RequestStorage {
 
     private final RestTemplate restTemplate;
-    // private final HashSet<String> nodesList;
     private final Set<String> nodesList;
     private final ConcurrentHashMap<String, UserRequest> requestStatus;
 
     public RequestStorage(RestTemplate restTemplate) {
         this.restTemplate = restTemplate;
-        // this.nodesList = new HashSet<>();
         this.nodesList = ConcurrentHashMap.newKeySet();
         this.requestStatus = new ConcurrentHashMap<>();
     }
@@ -34,7 +32,6 @@ public class RequestStorage {
     }
 
     public Set<String> getRequestList() {
-        // return requestStatus.keySet();
         return new java.util.HashSet<>(requestStatus.keySet());
     }
 
@@ -53,21 +50,12 @@ public class RequestStorage {
         // only leaders
         for (String node : nodesList) {
             try {
-                // String targetUrl = "http://localhost:" + node + "/copy";
-                // ---- kduy fix from here ---
-                // // String targetUrl = "http://localhost:" + node + "/copy";
-                // String targetUrl = "http://" + node + "/copy";
                 String targetUrl = node.contains(":") || node.contains(".") || node.equalsIgnoreCase("localhost") ? "http://" + node + "/copy" : "http://localhost:" + node + "/copy";
-                // --- to here ---
                 HttpHeaders headers = new HttpHeaders();
                 headers.setContentType(MediaType.APPLICATION_JSON);
                 HttpEntity<UserRequest> entity = new HttpEntity<>(request, headers);
-                // ---- kduy fix from here ---
-                // Boolean result = restTemplate.postForObject(targetUrl, entity, Boolean.class);
-                // if (result) {System.out.println("Broadcast request done.");}
                 Boolean result = restTemplate.postForObject(targetUrl, entity, Boolean.class);
                 if (Boolean.TRUE.equals(result)) {System.out.println("Broadcast request done.");}
-                // --- to here ---
             } catch (Exception e) {System.out.println("Broadcast request failed.");}
         }
     }
@@ -77,7 +65,6 @@ public class RequestStorage {
     }
 
     public void setNode(List<String> list) {
-        // this.nodesList.clear();
         this.nodesList.retainAll(list);
         this.nodesList.addAll(list);
     }
@@ -85,7 +72,6 @@ public class RequestStorage {
     @Scheduled(fixedDelay = 5000)
     private void cleanUp() {
         LocalDateTime now = LocalDateTime.now(); 
-        // requestStatus.values().removeIf(request -> request.getTtl().isBefore(now));
         requestStatus.values().removeIf(request -> 
             request.getTtl() != null && request.getTtl().isBefore(now));
     }

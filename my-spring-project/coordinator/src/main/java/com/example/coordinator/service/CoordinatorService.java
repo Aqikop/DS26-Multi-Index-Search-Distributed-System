@@ -3,6 +3,7 @@ package com.example.coordinator.service;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
@@ -47,11 +48,25 @@ public class CoordinatorService {
         }
     }
 
-    public String get(String id) {
+    public ResponseEntity<com.example.shared.model.SearchResponse> get(String id) {
         UserRequest request = storage.getRequest(id);
-        if (request == null) {return "Id does not exist.";}
-        if (request.getState().equals("done")) {return request.getResult();} 
-        else {return request.getState();}
+        if (request == null) {
+            return ResponseEntity.notFound().build();
+        }
+        
+        com.example.shared.model.SearchResponse response = new com.example.shared.model.SearchResponse();
+        if ("done".equals(request.getState())) {
+            response.setState(com.example.shared.model.StatusState.SUCCESS);
+            response.setAnswer(request.getResult());
+            response.setRecipes(request.getRecipeQueryResults());
+        } else if ("error".equals(request.getState())) {
+            response.setState(com.example.shared.model.StatusState.FAILED);
+        } else if ("received".equals(request.getState())) {
+            response.setState(com.example.shared.model.StatusState.RECEIVED);
+        } else {
+            response.setState(com.example.shared.model.StatusState.PENDING);
+        }
+        return ResponseEntity.ok(response);
     }
 
     public UserRequest getTest(String id) {

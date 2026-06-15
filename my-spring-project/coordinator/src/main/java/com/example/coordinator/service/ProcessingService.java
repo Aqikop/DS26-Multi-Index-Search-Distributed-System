@@ -2,9 +2,6 @@ package com.example.coordinator.service;
 
 import java.util.ArrayList;
 import java.util.List;
-// ---- kduy fix from here ---
-// import java.util.HashSet;
-// import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -15,7 +12,6 @@ import java.util.concurrent.LinkedBlockingQueue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-// --- to here ----
 
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpEntity;
@@ -36,20 +32,15 @@ public class ProcessingService {
 
     private final RestTemplate restTemplate;
     private final RequestStorage storage;
-    // ---- kduy fix from here ---
-    // private boolean isLeader;
     private volatile boolean isLeader;
     private volatile boolean isProcessingThreadRunning = false;
 
-    // private final HashSet<String> llmNodes = new HashSet<>();
-    // private final HashSet<String> dbNodes = new HashSet<>();
     private final Set<String> llmNodes = ConcurrentHashMap.newKeySet();
     private final Set<String> dbNodes = ConcurrentHashMap.newKeySet();
 
     private final LinkedBlockingQueue<String> requestQueue;
     private final ScheduledExecutorService retryScheduler = Executors.newScheduledThreadPool(1);
     private final ConcurrentHashMap<String, Integer> retryCounts = new ConcurrentHashMap<>();
-    // --- to here ----
 
     public ProcessingService(RestTemplate restTemplate, RequestStorage storage) {
         this.restTemplate = restTemplate;
@@ -101,15 +92,12 @@ public class ProcessingService {
     }
 
     public void updateQueue() { 
-        // ---- kduy fix from here ---
-        // requestQueue.addAll(storage.getRequestList());
         for (String id : storage.getRequestList()) {
             UserRequest req = storage.getRequest(id);
             if (req != null && !req.getState().equals("done") && !req.getState().equals("error")) {
                 requestQueue.offer(id);
             }
         }
-        // --- to here ----
     } 
 
     public boolean addToQueue(String id) {
@@ -120,10 +108,8 @@ public class ProcessingService {
     }
 
     public void processingThread() {
-        // ---- kduy fix from here ---
         if (isProcessingThreadRunning) return;
         isProcessingThreadRunning = true;
-        // --- to here ----
         // add time out??
         Thread checkingThread = new Thread(() -> {
             try {
@@ -205,16 +191,8 @@ public class ProcessingService {
                         }
 
                     } else if (request.getState().equals("searched")) {
-                        // --- kduy fix here ----
 
-                        // get the llm node to process
-                        // added all the new result back to request
 
-                        // Thread.sleep(5000); 
-                        // request.setState("done");
-                        // request.setResult("final result is here");
-                        // storage.storeRequest(id, request);
-                        // storage.broadCastCopy(request);
                         
                         String finalResult = sendToLLMAnswerNode(request);
                         if (finalResult != null) {
@@ -245,7 +223,6 @@ public class ProcessingService {
                                 retryScheduler.schedule(() -> this.addToQueue(id), 5, TimeUnit.SECONDS);
                             }
                         }
-                        // ---- to here kduy ---
                         
                     } else {
                         System.out.println("Something went very wrong");
@@ -258,11 +235,9 @@ public class ProcessingService {
                     e.printStackTrace();
                 }
             }
-            // ---- kduy fix from here ---
             } finally {
                 isProcessingThreadRunning = false;
             }
-            // --- to here ----
         });
 
         checkingThread.setDaemon(true); 
@@ -277,9 +252,7 @@ public class ProcessingService {
                 attempt = attempt + 1;
                 String node = (String) llmNodes.toArray()[ThreadLocalRandom.current().nextInt(numberOfNodes)];
                 try {
-                    // String targetUrl = "http://" + node + "/llm";
-                    // String targetUrl = "http://localhost:" + node + "/llm/decompose";
-                    String targetUrl = "http://" + node + "/llm/decompose";
+                    String targetUrl = formatUrl(node, "/llm/decompose");
 
                     HttpHeaders headers = new HttpHeaders();
                     headers.setContentType(MediaType.APPLICATION_JSON);
@@ -301,8 +274,7 @@ public class ProcessingService {
         if (numberOfNodes > 0)  {
             for (String node : dbNodes) {
                 try {
-                    // String targetUrl = "http://localhost:" + node + "/recipes/search";
-                    String targetUrl = "http://" + node + "/recipes/search";
+                    String targetUrl = formatUrl(node, "/recipes/search");
                     HttpHeaders headers = new HttpHeaders();
                     headers.setContentType(MediaType.APPLICATION_JSON);
                     HttpEntity<RecipeQuery> entity = new HttpEntity<>(recipeQuery, headers);
@@ -320,8 +292,6 @@ public class ProcessingService {
                     e.printStackTrace();
                 }
             }
-            // ---- kduy add here ---
-            // add sort top10 only
             results.sort((r1, r2) -> {
                 Double s1 = r1.getScore() != null ? r1.getScore() : 0.0;
                 Double s2 = r2.getScore() != null ? r2.getScore() : 0.0;
@@ -331,7 +301,6 @@ public class ProcessingService {
                 return new ArrayList<>(results.subList(0, 10));
             }
             return results;
-            // --- to here kduy ----
         } else {
             System.out.println("No recipe nodes found");
             return null;
@@ -346,8 +315,7 @@ public class ProcessingService {
                 attempt = attempt + 1;
                 String node = (String) llmNodes.toArray()[ThreadLocalRandom.current().nextInt(numberOfNodes)];
                 try {
-                    // String targetUrl = "http://localhost:" + node + "/llm/answer";
-                    String targetUrl = "http://" + node + "/llm/answer";
+                    String targetUrl = formatUrl(node, "/llm/answer");
                     HttpHeaders headers = new HttpHeaders();
                     headers.setContentType(MediaType.APPLICATION_JSON);
                     HttpEntity<UserRequest> entity = new HttpEntity<>(userRequest, headers);
@@ -363,5 +331,12 @@ public class ProcessingService {
             System.out.println("No llm nodes found");
             return null;
         }
+    }
+
+    private String formatUrl(String idOrAddress, String path) {
+        if (idOrAddress.contains(":") || idOrAddress.contains(".") || idOrAddress.equalsIgnoreCase("localhost")) {
+            return "http://" + idOrAddress + path;
+        }
+        return "http://localhost:" + idOrAddress + path;
     }
 }

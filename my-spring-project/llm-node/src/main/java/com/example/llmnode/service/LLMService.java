@@ -7,6 +7,7 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.example.shared.model.LLMRequest;
 
 @Service
@@ -25,7 +26,7 @@ public class LLMService {
         return postJson("/decompose", request);
     }
 
-    public String answer(Object request) {
+    public String answer(JsonNode request) {
         return postJson("/answer", request);
     }
 

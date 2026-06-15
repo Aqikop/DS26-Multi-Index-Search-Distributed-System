@@ -27,11 +27,9 @@ public class ConsensusService {
     private final ProcessingService processingService;
     private final RequestStorage storage;
 
-    // private final HashSet<String> nodesList = new HashSet<>();
     private final Set<String> nodesList = ConcurrentHashMap.newKeySet();
-    @Value("${server.port:8080}")
+    @Value("${node.id:${server.port:8080}}")
     private String nodeId; // do I need to sync???
-    // private volatile boolean voted;
     private final AtomicBoolean voted = new AtomicBoolean(false);
     
     public volatile String nodeStatus; // do I need to sync???
@@ -44,35 +42,27 @@ public class ConsensusService {
         this.processingService = processingService;
         this.storage = storage;
 
-        // this.voted = false;
         this.voted.set(false);
         this.nodeStatus = "follower";
         this.leaderId = null;
-        // this.term = 0;
         this.term = new AtomicInteger(0);
         }
 
+    /**
+     * Handles incoming Raft vote requests from candidates.
+     * Grants vote if the candidate's term is greater or equal and it has sufficient requests.
+     */
     public boolean vote(VoteRequest request) { 
         int requestCount = storage.getRequestList().size();
 
-        // ---- kduy fix from here ---
-        // if (this.term <= request.getTerm() && requestCount <= request.getRequestCount()) {
-        //     if(this.term < request.getTerm()) {
-        //         this.term += 1;
-        //         this.voted = false;
-        //     }
         if (this.term.get() <= request.getTerm() && requestCount <= request.getRequestCount()) {
             if(this.term.get() < request.getTerm()) {
                 this.term.set(request.getTerm());
                 this.voted.set(false);
             }
-        // --- to here ---
             int candidateRequestCount = request.getRequestCount();
             
-            // ---- kduy fix from here ---
-            // if (candidateRequestCount >= 3 && this.voted.compareAndSet(false, true)) {
             if (this.voted.compareAndSet(false, true)) {
-            // --- to here ---
                 this.nodeStatus = "follower";
                 processingService.setIsLeader(false);
                 return true;
@@ -81,6 +71,10 @@ public class ConsensusService {
         return false;
     }
 
+    /**
+     * Receives heartbeats from the Leader.
+     * Resets the election timeout and updates the current term.
+     */
     public boolean ping(String id, int term) {
         // if (term >= this.term) {
         if (term >= this.term.get()) {
@@ -93,15 +87,15 @@ public class ConsensusService {
         } else {return false;}
     }
 
+    /**
+     * Registers a new node to the cluster.
+     * If this node is the leader, it broadcasts the new node to all followers.
+     */
     public NodesInfo join(String id) {
         if (nodeStatus.equals("leader")) {
             Boolean validity = false;
             try {
-                // ---- kduy fix from here ---
-                // // String targetUrl = "http://localhost:" + id + "/ping";
-                // String targetUrl = "http://" + id + "/ping";
                 String targetUrl = formatUrl(id, "/ping");
-                // --- to here ---
                 String urlTemplate = UriComponentsBuilder.fromHttpUrl(targetUrl)
                         .queryParam("id", nodeId)
                         // .queryParam("term", this.term)
@@ -118,11 +112,7 @@ public class ConsensusService {
 
                 for (String node : nodesList) {
                     try {
-                        // ---- kduy fix from here ---
-                        // // String targetUrl = "http://localhost:" + id + "/join";
-                        // String targetUrl = "http://" + node + "/join";
                         String targetUrl = formatUrl(node, "/join");
-                        // --- to here ---
                         String urlTemplate = UriComponentsBuilder.fromHttpUrl(targetUrl)
                                 .queryParam("id", id)
                                 .encode()
@@ -131,7 +121,6 @@ public class ConsensusService {
                     } catch (RestClientException e) { System.out.println("Ping failed.");}
                 }
 
-                // List coordinators = new ArrayList<>(nodesList);
                 List<String> coordinators = new ArrayList<>(nodesList);
 
                 coordinators.add(nodeId);
@@ -152,14 +141,13 @@ public class ConsensusService {
         return null;
     }
 
+    /**
+     * Forces this node to follow a new leader.
+     */
     public boolean follow(String id) {
         if (id.equals(nodeId)) {return false;}
         try {
-            // ---- kduy fix from here ---
-            // // String targetUrl = "http://localhost:" + node + "/join";
-            // String targetUrl = "http://" + id + "/join";
             String targetUrl = formatUrl(id, "/join");
-            // --- to here ---
             String urlTemplate = UriComponentsBuilder.fromHttpUrl(targetUrl)
                     .queryParam("id", nodeId)
                     .encode()
@@ -191,11 +179,7 @@ public class ConsensusService {
             processingService.apply(id, type);
             for (String node : nodesList) {
                 try {
-                // ---- kduy fix from here ---
-                // // String targetUrl = "http://localhost:" + node + "/apply";
-                // String targetUrl = "http://" + node + "/apply";
                 String targetUrl = formatUrl(node, "/apply");
-                // --- to here ---
                 String urlTemplate = UriComponentsBuilder.fromHttpUrl(targetUrl)
                         .queryParam("id", id)
                         .queryParam("type", type)
@@ -212,16 +196,16 @@ public class ConsensusService {
         return false;
     }
 
+    /**
+     * Leader continuously pings followers to maintain authority.
+     * Steps down to follower if a ping fails significantly (split brain prevention).
+     */
     @Scheduled(fixedDelay = 1000)
     public void pingingThread() {
         if (nodeStatus.equals("leader")) {
             for (String node : nodesList) {
                 try {
-                    // ---- kduy fix from here ---
-                    // // String targetUrl = "http://localhost:" + node + "/ping";
-                    // String targetUrl = "http://" + node + "/ping";
                     String targetUrl = formatUrl(node, "/ping");
-                    // --- to here ---
                     String urlTemplate = UriComponentsBuilder.fromHttpUrl(targetUrl)
                             .queryParam("id", nodeId)
                             // .queryParam("term", this.term)
@@ -229,12 +213,8 @@ public class ConsensusService {
                             .encode()
                             .toUriString();
 
-                    // ---- kduy fix from here ---
-                    // Boolean response = restTemplate.postForObject(urlTemplate, null, Boolean.class);
-                    // if (!response) {
                     Boolean response = restTemplate.postForObject(urlTemplate, null, Boolean.class);
                     if (response == null || !response) {
-                    // --- to here ---
                         nodeStatus = "follower"; 
                         processingService.setIsLeader(false);
                         }
@@ -244,6 +224,10 @@ public class ConsensusService {
         }
     }
 
+    /**
+     * Follower timeout checker. If no heartbeat is received from the leader
+     * within the threshold, this node becomes a candidate and starts an election.
+     */
     @Scheduled(fixedDelay = 5000)
     public void scheduledTask() {
         // System.out.println("Current Status: " + this.nodeStatus + " " + this.term);
@@ -253,14 +237,15 @@ public class ConsensusService {
             else {
                 this.nodeStatus = "candidate";
                 processingService.setIsLeader(false);
-                // ---- kduy fix from here ---
-                // while (this.nodeStatus.equals("candidate")) {
                 new Thread(this::runElection).start();
-                // --- to here ---
             }
         }
     }
 
+    /**
+     * Executes the Raft leader election process.
+     * Requests votes from all known nodes and becomes Leader if the majority grants the vote.
+     */
     private void runElection() {
         while (this.nodeStatus.equals("candidate")) {
             try {
@@ -272,7 +257,6 @@ public class ConsensusService {
 
                     // this.term = term + 1;
                     this.term.incrementAndGet();
-                    // this.voted = false;
                     this.voted.set(false);
                     int vote = 1;
 
@@ -291,11 +275,7 @@ public class ConsensusService {
                     // check status again maybe??
                     for (String node : nodesList) {
                         try {
-                            // ---- kduy fix from here ---
-                            // // String targetUrl = "http://localhost:" + node + "/vote";
-                            // String targetUrl = "http://" + node + "/vote";
                             String targetUrl = formatUrl(node, "/vote");
-                            // --- to here ---
                             HttpHeaders headers = new HttpHeaders();
                             headers.setContentType(MediaType.APPLICATION_JSON);
                             HttpEntity<VoteRequest> entity = new HttpEntity<>(request, headers);
@@ -316,12 +296,10 @@ public class ConsensusService {
                 }
     }
 
-    // ---- kduy fix from here ---
     private String formatUrl(String idOrAddress, String path) {
         if (idOrAddress.contains(":") || idOrAddress.contains(".") || idOrAddress.equalsIgnoreCase("localhost")) {
             return "http://" + idOrAddress + path;
         }
         return "http://localhost:" + idOrAddress + path;
     }
-    // --- to here ---
 }

@@ -1,14 +1,9 @@
 package com.example.coordinator.model;
 
 public class VoteRequest {
-    // ---- kduy fix from here ---
-    // public int term;
-    // public String candidateId;
-    // public int requestCount;
     private int term;
     private String candidateId;
     private int requestCount;
-    // --- to here ---
 
     public VoteRequest() {}
 

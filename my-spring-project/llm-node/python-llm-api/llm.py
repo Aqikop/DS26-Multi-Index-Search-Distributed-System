@@ -137,7 +137,6 @@ maxSodium is in **milligrams**. Do not convert.
 OUTPUT SCHEMA  (return ONLY valid JSON — no markdown, no explanation)
 ═══════════════════════════════════════════════════════════
 
-# ---- kduy fix here ---
 {{
   "recipe_query": string,
   "filters": {{
@@ -187,7 +186,6 @@ User: "I have 200g chicken breast, 3 cloves of garlic, and some olive oil — wh
 
 User: "vegan gluten-free breakfast with pictures"
 {{"recipe_query":"vegan gluten-free breakfast","filters":{{"meal_type":"breakfast","cuisine":null,"cooking_method":null,"main_protein":"tofu","diet_flags":["vegan","gluten_free"],"max_ingredients":null,"max_cook_time":null,"has_picture":true,"max_calories":null,"min_protein":null,"max_fat":null,"max_carbs":null,"min_fiber":null,"max_sugar":null,"max_sodium":null,"is_high_protein":null,"is_low_carb":null,"is_low_calorie":null,"ingredients_list":null,"ingredient_units":null,"ingredient_quantities":null}},"state":null}}
-# ---- to here kduy ---
 
 Now parse this query:
 User: "{user_query}"
@@ -225,7 +223,6 @@ def decompose_routing(user_query: str) -> str:
 # STAGE 3 — GENERATE ANSWER
 # ══════════════════════════════════════════════════════════════════════════════
 
-# ---- kduy fix here ---
 def _format_recipe_point(point, rank: int, user_ingredients: list[str] | None) -> str:
     """Format a single recipe ScoredPoint or dict as a context block for the LLM.
     
@@ -243,18 +240,13 @@ def _format_recipe_point(point, rank: int, user_ingredients: list[str] | None) -
         score = getattr(point, "score", 0.0)
         metadata = getattr(point, "metadata", {}) or {}
 
-    # ── Resolve payload ────────────────────────────────────────────────────────
     if isinstance(raw_payload, str):
-        # Java sent payload as the recipe text string (not a JSON dict).
-        # Structured fields come from the top-level dict / metadata instead.
         text = raw_payload
         payload = {}
     else:
-        # Native Qdrant ScoredPoint — payload is already a dict
         payload = raw_payload
         text = payload.get("text", "")
 
-    # ── Pull structured fields: prefer payload dict, fall back to metadata ─────
     cook_time      = payload.get("estimated_cook_time_min") or metadata.get("cookTime")
     diet_flags     = payload.get("diet_flags") or metadata.get("dietFlags") or []
     cooking_method = payload.get("cooking_method") or metadata.get("cookingMethod") or []
@@ -264,7 +256,6 @@ def _format_recipe_point(point, rank: int, user_ingredients: list[str] | None) -
     if isinstance(cooking_method, str):
         cooking_method = [cooking_method]
 
-    # ── Nutrition: top-level 'nutrition' key (Java shape) or payload ───────────
     nutrition = point.get("nutrition") if isinstance(point, dict) else getattr(point, "nutrition", None)
     if not nutrition:
         nutrition = payload.get("nutrition", {})
@@ -304,7 +295,6 @@ def _format_recipe_point(point, rank: int, user_ingredients: list[str] | None) -
     )
 
 
-# ---- kduy fix here ---
 def _format_nutrition_point(point, rank: int) -> str:
     """Format a single nutrition ScoredPoint or dict as a context block for the LLM."""
     if isinstance(point, dict):
@@ -328,10 +318,8 @@ def _format_nutrition_point(point, rank: int) -> str:
         f"Sodium   : {sodium_str}\n"
         f"Score    : {score:.3f}"
     )
-# ---- to here kduy ---
 
 
-# ---- kduy fix here ---
 def _build_context(
     results: dict | list,
     user_ingredients: list[str] | None,
@@ -345,7 +333,6 @@ def _build_context(
         recipe_points = results.get("recipes", [])[:3] if isinstance(results, dict) else []
         nutrition_points = results.get("nutrition", [])[:5] if isinstance(results, dict) else []
 
-    # Recipe section
     if recipe_points:
         blocks = [_format_recipe_point(p, i + 1, user_ingredients)
                   for i, p in enumerate(recipe_points)]
@@ -357,7 +344,6 @@ def _build_context(
     else:
         recipe_section = "RETRIEVED RECIPES\nNo recipes found.\n\n"
 
-    # Nutrition section
     if nutrition_points:
         blocks = [_format_nutrition_point(p, i + 1)
                   for i, p in enumerate(nutrition_points)]
@@ -370,7 +356,6 @@ def _build_context(
         nutrition_section = ""
 
     return recipe_section, nutrition_section
-# ---- to here kduy ---
 
 
 _ANSWER_PROMPT = """\
@@ -432,13 +417,11 @@ _answer_chain = (
 )
 
 
-# ---- kduy fix here ---
 def generate_answer(
     user_query: str,
     results: dict | list,
     user_ingredients: list[str] | None = None,
 ) -> str:
-# ---- to here kduy ---
     """
     Format retrieved documents into prompt context and generate final answer.
 
