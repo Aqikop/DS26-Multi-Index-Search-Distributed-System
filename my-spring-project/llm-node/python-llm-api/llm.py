@@ -221,245 +221,72 @@ def decompose_routing(user_query: str) -> str:
     print(f"[decompose_routing] intent: {clean}")
     return clean  # str — valid JSON
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# STAGE 2 — RETRIEVE
-# ══════════════════════════════════════════════════════════════════════════════
-
-def build_recipe_filter(recipe_filters: dict) -> models.Filter | None:
-    """Map recipe_filters dict → Qdrant Filter."""
-    if not recipe_filters:
-        return None
-
-    must = []
-
-    # Exact string / boolean matches
-    for field in ["meal_type", "cuisine", "main_protein", "has_picture"]:
-        val = recipe_filters.get(field)
-        if val is not None:
-            must.append(models.FieldCondition(
-                key=field,
-                match=models.MatchValue(value=val)
-            ))
-
-    # List fields — match any element
-    for field in ["cooking_method", "diet_flags"]:
-        val = recipe_filters.get(field)
-        if val:
-            must.append(models.FieldCondition(
-                key=field,
-                match=models.MatchAny(any=val)
-            ))
-
-    # Numeric upper bounds
-    if recipe_filters.get("max_ingredients") is not None:
-        must.append(models.FieldCondition(
-            key="ingredient_count",
-            range=models.Range(lte=recipe_filters["max_ingredients"])
-        ))
-    if recipe_filters.get("max_cook_time") is not None:
-        must.append(models.FieldCondition(
-            key="estimated_cook_time_min",
-            range=models.Range(lte=recipe_filters["max_cook_time"])
-        ))
-
-    return models.Filter(must=must) if must else None
-
-
-def build_nutrition_filter(nutrition_filters: dict) -> models.Filter | None:
-    """Map nutrition_filters dict → Qdrant Filter.
-    NOTE: sodium is stored in grams — max_sodium_g maps directly, no conversion needed.
-    """
-    if not nutrition_filters:
-        return None
-
-    must = []
-
-    if nutrition_filters.get("food_name"):
-        must.append(models.FieldCondition(
-            key="food_name",
-            match=models.MatchValue(value=nutrition_filters["food_name"])
-        ))
-
-    # Boolean flags — only filter when explicitly True
-    for field in ["is_high_protein", "is_low_carb", "is_low_calorie"]:
-        if nutrition_filters.get(field) is True:
-            must.append(models.FieldCondition(
-                key=field,
-                match=models.MatchValue(value=True)
-            ))
-
-    # Numeric range filters
-    range_map = {
-        "max_calories": ("calories", "lte"),
-        "min_protein":  ("protein",  "gte"),
-        "max_fat":      ("fat",      "lte"),
-        "max_carbs":    ("carbs",    "lte"),
-        "min_fiber":    ("fiber",    "gte"),
-        "max_sugar":    ("sugar",    "lte"),
-        "max_sodium_g": ("sodium",   "lte"),
-    }
-    for filter_key, (payload_key, operator) in range_map.items():
-        val = nutrition_filters.get(filter_key)
-        if val is not None:
-            must.append(models.FieldCondition(
-                key=payload_key,
-                range=models.Range(**{operator: val})
-            ))
-
-    return models.Filter(must=must) if must else None
-
-
-def query_collection(
-    collection_name: str,
-    search_text: str,
-    query_filter: models.Filter | None,
-    limit: int = 5,
-) -> list:
-    """Run a single Qdrant vector search and return ScoredPoint list."""
-    if not search_text.strip():
-        print(f"[query_collection] Empty search text for '{collection_name}' — skipping.")
-        return []
-
-    print(f"\n[{collection_name}] query  : '{search_text}'")
-    print(f"[{collection_name}] filter : {query_filter}")
-
-    results = qdrant_client.query_points(
-        collection_name=collection_name,
-        query=Document(text=search_text, model=EMBED_MODEL),
-        query_filter=query_filter,
-        limit=limit,
-    )
-    return results.points
-
-
-def _ingredient_nutrition_lookup(recipe_points: list) -> list:
-    """
-    Per-ingredient nutrition lookup for estimate_nutrition queries.
-    Extracts ingredients from each recipe's text and searches nutrition collection.
-    """
-    all_nutrition = []
-    for point in recipe_points:
-        # Parse ingredients from the structured text field
-        text = point.payload.get("text", "")
-        try:
-            ing_block = text.split("Ingredients:\n")[1].split("\n\nInstructions:")[0]
-            ingredients = [
-                line.lstrip("- ").strip()
-                for line in ing_block.splitlines()
-                if line.strip()
-            ]
-        except IndexError:
-            ingredients = []
-
-        for ingredient in ingredients[:4]:  # top 4 per recipe to limit API calls
-            hits = query_collection(NUTRITION_COL, ingredient, None, limit=1)
-            all_nutrition.extend(hits)
-
-    return all_nutrition
-
-
-def retrieve(user_query: str, intent: dict, limit: int = 5) -> dict:
-    """
-    Route intent to correct Qdrant collection(s) and return results.
-
-    Args:
-        user_query : original user question (fallback search text)
-        intent     : output of decompose_routing()
-        limit      : max results per collection
-
-    Returns:
-        {
-            "intent":    intent dict,
-            "recipes":   list[ScoredPoint],
-            "nutrition": list[ScoredPoint],
-        }
-    """
-    if not intent:
-        print("[retrieve] Empty intent — falling back to recipe semantic search.")
-        return {
-            "intent": {},
-            "recipes": query_collection(RECIPES_COL, user_query, None, limit),
-            "nutrition": [],
-        }
-
-    collections        = intent.get("collections", [RECIPES_COL])
-    estimate_nutrition = intent.get("estimate_nutrition", False)
-    recipe_query       = intent.get("recipe_query") or user_query
-    nutrition_query    = intent.get("nutrition_query") or user_query
-
-    output = {"intent": intent, "recipes": [], "nutrition": []}
-
-    if RECIPES_COL in collections:
-        recipe_filter      = build_recipe_filter(intent.get("recipe_filters") or {})
-        output["recipes"]  = query_collection(RECIPES_COL, recipe_query, recipe_filter, limit)
-
-    if NUTRITION_COL in collections:
-        if estimate_nutrition and output["recipes"]:
-            # Ingredient-level lookup instead of direct nutrition search
-            output["nutrition"] = _ingredient_nutrition_lookup(output["recipes"])
-        else:
-            nutrition_filter      = build_nutrition_filter(intent.get("nutrition_filters") or {})
-            output["nutrition"]   = query_collection(NUTRITION_COL, nutrition_query, nutrition_filter, limit)
-
-    return output
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 # STAGE 3 — GENERATE ANSWER
 # ══════════════════════════════════════════════════════════════════════════════
 
 # ---- kduy fix here ---
 def _format_recipe_point(point, rank: int, user_ingredients: list[str] | None) -> str:
-    """Format a single recipe ScoredPoint or dict as a context block for the LLM."""
+    """Format a single recipe ScoredPoint or dict as a context block for the LLM.
+    
+    Handles two shapes:
+      - Qdrant ScoredPoint: point.payload is a dict with 'text', 'estimated_cook_time_min', etc.
+      - Java RecipeQueryResult (snake_case JSON): point is a dict where 'payload' is a plain
+        text string, and structured fields live at the top level or inside 'metadata'.
+    """
     if isinstance(point, dict):
-        payload = point.get("payload", {})
+        raw_payload = point.get("payload", {})
         score = point.get("score", 0.0)
+        metadata = point.get("metadata") or {}
     else:
-        payload = getattr(point, "payload", {})
+        raw_payload = getattr(point, "payload", {})
         score = getattr(point, "score", 0.0)
-        
-    if isinstance(payload, str):
-        import json
-        try:
-            payload = json.loads(payload)
-        # ---- kduy fix from here ---
-        # except:
-        except (json.JSONDecodeError, TypeError, ValueError):
-        # --- to here ----
-            payload = {}
+        metadata = getattr(point, "metadata", {}) or {}
 
-        
-    text           = payload.get("text", "")
-    cook_time      = payload.get("estimated_cook_time_min")
-    diet_flags     = payload.get("diet_flags") or []
-    cooking_method = payload.get("cooking_method") or []
+    # ── Resolve payload ────────────────────────────────────────────────────────
+    if isinstance(raw_payload, str):
+        # Java sent payload as the recipe text string (not a JSON dict).
+        # Structured fields come from the top-level dict / metadata instead.
+        text = raw_payload
+        payload = {}
+    else:
+        # Native Qdrant ScoredPoint — payload is already a dict
+        payload = raw_payload
+        text = payload.get("text", "")
 
-    nutrition = point.get("nutrition", {}) if isinstance(point, dict) else getattr(point, "nutrition", {})
+    # ── Pull structured fields: prefer payload dict, fall back to metadata ─────
+    cook_time      = payload.get("estimated_cook_time_min") or metadata.get("cookTime")
+    diet_flags     = payload.get("diet_flags") or metadata.get("dietFlags") or []
+    cooking_method = payload.get("cooking_method") or metadata.get("cookingMethod") or []
+    
+    if isinstance(diet_flags, str):
+        diet_flags = [diet_flags]
+    if isinstance(cooking_method, str):
+        cooking_method = [cooking_method]
+
+    # ── Nutrition: top-level 'nutrition' key (Java shape) or payload ───────────
+    nutrition = point.get("nutrition") if isinstance(point, dict) else getattr(point, "nutrition", None)
+    if not nutrition:
+        nutrition = payload.get("nutrition", {})
+        
     nutrition_str = ""
     if nutrition:
-        nutrition_str = (
-            f"Nutrition : {nutrition.get('calories', 'N/A')} kcal | "
-            f"{nutrition.get('protein', 'N/A')}g protein | "
-            f"{nutrition.get('fat', 'N/A')}g fat | "
-            f"{nutrition.get('carbs', 'N/A')}g carbs\n"
-        )
+        if isinstance(nutrition, dict):
+            nutrition_str = (
+                f"Nutrition : {nutrition.get('calories', 'N/A')} kcal | "
+                f"{nutrition.get('protein', 'N/A')}g protein | "
+                f"{nutrition.get('fat', 'N/A')}g fat | "
+                f"{nutrition.get('carbs', 'N/A')}g carbs\n"
+            )
 
-    # ---- kduy fix from here ---
-    # time_str = (
-    #     f"{cook_time} min"       if cook_time and 0 < cook_time <= 300 else
-    #     f"{cook_time // 60} hrs" if cook_time and cook_time > 300      else
-    #     "not specified"
-    # )
     time_str = (
         f"{cook_time} min"       if cook_time and 0 < cook_time <= 119 else
         f"{cook_time // 60} hrs {cook_time % 60} mins".replace(" 0 mins", "") if cook_time and cook_time > 119 else
         "not specified"
     )
-    # --- to here ----
 
     overlap_line = ""
-    if user_ingredients:
+    if user_ingredients and text:
         matched = [i for i in user_ingredients if i.lower() in text.lower()]
         if matched:
             overlap_line = f"Matched your ingredients: {', '.join(matched)}\n"
@@ -475,7 +302,6 @@ def _format_recipe_point(point, rank: int, user_ingredients: list[str] | None) -
         f"---\n"
         f"{text}"
     )
-# ---- to here kduy ---
 
 
 # ---- kduy fix here ---
