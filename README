@@ -16,8 +16,20 @@ INSTRUCTION:
 
     .\.venv\Scripts\Activate.ps1
     python -m uvicorn app:app --host 127.0.0.1 --port 5000 
+    python -m uvicorn app:app --host 127.0.0.1 --port 5001 
 
-    mvn spring-boot:run
 
-    Invoke-RestMethod -Method Post -Uri "http://localhost:8080/apply?id=localhost:8120&type=llm"
-    Invoke-RestMethod -Method Post -Uri "http://localhost:8080/apply?id=localhost:8100&type=db"
+    mvn spring-boot:run "-Dspring-boot.run.jvmArguments=-Dserver.port=8080"
+
+    # 1. Kết nối cụm Coordinator
+    curl.exe -X POST "http://localhost:8081/follow?id=localhost:8080"
+    curl.exe -X POST "http://localhost:8082/follow?id=localhost:8080"
+
+    # 2. Đăng ký 3 Recipe Search Nodes (vào Leader 8080)
+    curl.exe -X POST "http://localhost:8080/apply?id=localhost:8100&type=db"
+    curl.exe -X POST "http://localhost:8080/apply?id=localhost:8101&type=db"
+    curl.exe -X POST "http://localhost:8080/apply?id=localhost:8102&type=db"
+
+    # 3. Đăng ký 2 LLM Nodes (vào Leader 8080)
+    curl.exe -X POST "http://localhost:8080/apply?id=localhost:8120&type=llm"
+    curl.exe -X POST "http://localhost:8080/apply?id=localhost:8121&type=llm"
