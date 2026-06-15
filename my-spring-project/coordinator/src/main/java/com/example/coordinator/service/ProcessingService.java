@@ -259,7 +259,10 @@ public class ProcessingService {
                     HttpEntity<LLMRequest> entity = new HttpEntity<>(llmRequest, headers);
 
                     return restTemplate.postForObject(targetUrl, entity, RecipeQuery.class);
-                } catch (Exception e) {System.out.println("Calling llm service failed.");}
+                } catch (Exception e) {
+                    System.out.println("Calling llm service failed: " + e.getMessage());
+                    e.printStackTrace();
+                }
             } while (attempt < 5);
             return null;
         } else {

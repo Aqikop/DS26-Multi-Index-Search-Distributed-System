@@ -196,6 +196,22 @@ public class ConsensusService {
         return false;
     }
 
+    public String redirect(com.example.shared.model.LLMRequest request) {
+        System.out.println("Redirecting..");
+        if (leaderId != null) {
+            try {
+                String targetUrl = formatUrl(leaderId, "/search");
+                HttpHeaders headers = new HttpHeaders();
+                headers.setContentType(MediaType.APPLICATION_JSON);
+                HttpEntity<com.example.shared.model.LLMRequest> entity = new HttpEntity<>(request, headers);
+                return restTemplate.postForObject(targetUrl, entity, String.class);
+            } catch (Exception e) {
+                System.out.println("Redirecting fails: " + e.getMessage());
+            }
+        }
+        return "Rejected, not leading and redirect failed.";
+    }
+
     /**
      * Leader continuously pings followers to maintain authority.
      * Steps down to follower if a ping fails significantly (split brain prevention).

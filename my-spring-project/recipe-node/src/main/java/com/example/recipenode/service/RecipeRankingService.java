@@ -292,7 +292,11 @@ public class RecipeRankingService {
     }
 
     private boolean equalsIfPresent(String expected, String actual) {
-        return expected == null || normalizeText(expected).equals(normalizeText(actual));
+        if (expected == null) return true;
+        if (actual == null) return false;
+        String normExpected = normalizeText(expected);
+        String normActual = normalizeText(actual);
+        return normExpected.equals(normActual) || normActual.contains(normExpected) || normExpected.contains(normActual);
     }
 
     private boolean equalsIfPresent(Boolean expected, Boolean actual) {
@@ -315,16 +319,37 @@ public class RecipeRankingService {
         if (expected == null || expected.isEmpty()) {
             return true;
         }
+        if (actual == null || actual.isEmpty()) return false;
         Set<String> normalizedActual = normalizeAll(actual);
-        return expected.stream().map(this::normalizeText).anyMatch(normalizedActual::contains);
+        for (String exp : expected) {
+            String normExp = normalizeText(exp);
+            for (String act : normalizedActual) {
+                if (act.equals(normExp) || act.contains(normExp) || normExp.contains(act)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private boolean allIfPresent(Collection<String> expected, Collection<String> actual) {
         if (expected == null || expected.isEmpty()) {
             return true;
         }
+        if (actual == null || actual.isEmpty()) return false;
         Set<String> normalizedActual = normalizeAll(actual);
-        return expected.stream().map(this::normalizeText).allMatch(normalizedActual::contains);
+        for (String exp : expected) {
+            String normExp = normalizeText(exp);
+            boolean matchedExp = false;
+            for (String act : normalizedActual) {
+                if (act.equals(normExp) || act.contains(normExp) || normExp.contains(act)) {
+                    matchedExp = true;
+                    break;
+                }
+            }
+            if (!matchedExp) return false;
+        }
+        return true;
     }
 
     private Set<String> normalizeAll(Collection<String> values) {

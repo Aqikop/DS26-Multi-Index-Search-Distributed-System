@@ -2,6 +2,6 @@ python-dotenv
 langchain-google-genai
 langchain-core
 qdrant-client
-fastapi
+fastapi[standard]
 pydantic
 uvicorn

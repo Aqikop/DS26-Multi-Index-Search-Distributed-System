@@ -1,0 +1,1426 @@
+﻿diff --git "a/e:\\DS\\my-spring-project\\coordinator/Dockerfile" "b/e:\\DS\\my-spring-project\\coordinator/Dockerfile"
+new file mode 100644
+index 0000000..2a8a8ce
+--- /dev/null
++++ "b/e:\\DS\\my-spring-project\\coordinator/Dockerfile"
+@@ -0,0 +1,12 @@
++FROM maven:3.9.4-eclipse-temurin-17 AS build
++WORKDIR /app
++# Copy the root pom and modules
++COPY . .
++# Build the coordinator (and its dependent shared-models)
++RUN mvn -pl shared-models,coordinator clean install -DskipTests
++
++FROM eclipse-temurin:17-jre
++WORKDIR /app
++COPY --from=build /app/coordinator/target/coordinator-*.jar app.jar
++EXPOSE 8080
++ENTRYPOINT ["java", "-jar", "app.jar"]
+diff --git "a/e:\\DS\\my-spring-project\\coordinator/README.md" "b/e:\\DS\\my-spring-project\\coordinator/README.md"
+new file mode 100644
+index 0000000..2fe343f
+--- /dev/null
++++ "b/e:\\DS\\my-spring-project\\coordinator/README.md"
+@@ -0,0 +1,84 @@
++# Coordinator Node
++
++`coordinator` is the master orchestrator of the distributed food search system. It is built with Spring Boot and uses a custom implementation of the **Raft Consensus Algorithm** to manage the cluster state, handle leader elections, and orchestrate search requests across multiple worker nodes.
++
++## ≡ƒÅù Architecture & Raft Consensus
++
++The `coordinator` module acts as the entry point for all user requests and ensures high availability. It runs in a cluster where one node is the **Leader** and the others are **Followers**.
++
++- **Leader Election**: Managed by `ConsensusService`. If a follower does not receive a heartbeat (`/ping`) from the leader within 5 seconds, it promotes itself to a **Candidate** and broadcasts a `/vote` request. The node with the majority of votes becomes the new leader.
++- **Request State Machine**: The leader receives user requests and manages their lifecycle (`received` -> `decomposed` -> `recipes_found` -> `done` or `error`).
++- **Worker Delegation**: The leader distributes sub-tasks (`/llm/decompose`, `/recipes/search`, `/llm/answer`) to the `llm-node` and `recipe-node` pools using `ProcessingService`.
++
++## ≡ƒôé Key Components
++
++- **`ClientController`**: Exposes the public REST API (`/search`, `/get`) for frontend clients. Only the Leader processes these requests.
++- **`ClusterController`**: Internal endpoints (`/ping`, `/vote`, `/join`, `/copy`, etc.) used for inter-node communication and Raft consensus.
++- **`ConsensusService`**: Contains the core logic for the Raft algorithm (heartbeats, elections, terms, node discovery).
++- **`ProcessingService`**: The background worker thread that monitors the `requestQueue` and makes external HTTP calls to `llm-node` and `recipe-node`.
++- **`RequestStorage`**: A thread-safe in-memory key-value store that holds the `UserRequest` objects and their current processing state. It also broadcasts state copies to follower nodes for fault tolerance.
++
++## ≡ƒÜÇ Setup & Execution
++
++You can run multiple instances of the coordinator to form a cluster.
++
++1. **Run the First Node (Leader)**
++   ```bash
++   mvn spring-boot:run -Dspring-boot.run.arguments="--server.port=8080 --node.id=8080"
++   ```
++
++2. **Run a Second Node (Follower)**
++   ```bash
++   mvn spring-boot:run -Dspring-boot.run.arguments="--server.port=8081 --node.id=8081"
++   ```
++
++3. **Join the Cluster**
++   Send a join request from the new node to the leader:
++   ```bash
++   curl -X POST "http://localhost:8080/join?id=8081"
++   ```
++
++## ≡ƒ¢á Public API Usage
++
++### 1. Initiate a Search
++**Request**
++```bash
++curl -X POST http://localhost:8080/search \
++  -H "Content-Type: application/json" \
++  -d '{
++    "userQuery": "I want a high protein chicken dinner under 30 minutes"
++  }'
++```
++**Response**
++Returns a tracking ID (UUID) immediately.
++```text
++3fa85f64-5717-4562-b3fc-2c963f66afa6
++```
++
++### 2. Poll for Results
++Since processing involves multiple LLM calls and vector searches, it is asynchronous.
++**Request**
++```bash
++curl -X GET "http://localhost:8080/get?id=3fa85f64-5717-4562-b3fc-2c963f66afa6"
++```
++**Response (Pending)**
++```json
++{
++  "state": "PENDING"
++}
++```
++
++**Response (Done)**
++```json
++{
++  "state": "SUCCESS",
++  "recipes": [
++    {
++      "item_name": "Garlic Butter Chicken",
++      "score": 0.88,
++      "payload": "..."
++    }
++  ],
++  "answer": "Here are some great options for you! You can make Garlic Butter Chicken..."
++}
++```
+diff --git "a/e:\\DS\\my-spring-project\\coordinator/coordinator_explanation.txt" "b/e:\\DS\\my-spring-project\\coordinator/coordinator_explanation.txt"
+new file mode 100644
+index 0000000..1935963
+--- /dev/null
++++ "b/e:\\DS\\my-spring-project\\coordinator/coordinator_explanation.txt"
+@@ -0,0 +1,65 @@
++========================================================================
++T├ÇI LIß╗åU H╞»ß╗ÜNG Dß║¬N CHI TIß║╛T Vß╗Ç NODE "COORDINATOR" (D├ÇNH CHO NG╞»ß╗£I Mß╗ÜI Bß║«T ─Éß║ªU)
++========================================================================
++
++1. COORDINATOR L├Ç G├î?
++------------------------------------------------------------------------
++Trong mß╗Öt hß╗ç thß╗æng m├íy chß╗º b├¼nh th╞░ß╗¥ng, bß║ín chß╗ë c├│ 1 server xß╗¡ l├╜ mß╗ìi thß╗⌐. Nh╞░ng ß╗ƒ dß╗▒ ├ín n├áy, ch├║ng ta c├│ mß╗Öt "Hß╗ç thß╗æng ph├ón t├ín" (nhiß╗üu server chß║íy c├╣ng l├║c). 
++"Coordinator" ch├¡nh l├á "Ng╞░ß╗¥i Quß║ún L├╜" cß╗ºa to├án bß╗Ö hß╗ç thß╗æng n├áy. 
++
++Vai tr├▓ cß╗ºa n├│ y hß╗çt nh╞░ mß╗Öt ng╞░ß╗¥i Quß║ún ─æß╗æc ph├ón x╞░ß╗ƒng:
++- Kh├┤ng trß╗▒c tiß║┐p l├ám ra sß║ún phß║⌐m (kh├┤ng tß╗▒ xß╗¡ l├╜ AI, kh├┤ng tß╗▒ t├¼m kiß║┐m Database).
++- Nhiß╗çm vß╗Ñ l├á: Nhß║¡n ─æ╞ín h├áng tß╗½ Kh├ích, giao viß╗çc cho c├íc bß╗Ö phß║¡n chuy├¬n tr├ích (LLM-Node v├á Recipe-Node), theo d├╡i tiß║┐n ─æß╗Ö, v├á cuß╗æi c├╣ng trß║ú kß║┐t quß║ú cho Kh├ích.
++- ─Éß╗â hß╗ç thß╗æng kh├┤ng bao giß╗¥ bß╗ï "sß║¡p", ch├║ng ta c├│ thß╗â chß║íy c├╣ng l├║c 3, 5 hoß║╖c 7 ng╞░ß╗¥i Quß║ún ─æß╗æc (Coordinator Nodes). Nh╞░ng trong sß╗æ ─æ├│, chß╗ë c├│ 1 ng╞░ß╗¥i duy nhß║Ñt ─æ╞░ß╗úc l├ám "Tß╗òng Quß║ún L├╜" (Leader), nhß╗»ng ng╞░ß╗¥i c├▓n lß║íi l├ám "Nh├ón vi├¬n dß╗▒ bß╗ï" (Follower).
++
++
++2. THUß║¼T TO├üN RAFT: C├üCH Bß║ªU CHß╗îN Tß╗öNG QUß║óN L├¥ (ConsensusService)
++------------------------------------------------------------------------
++V├¼ c├│ nhiß╗üu Coordinator chß║íy c├╣ng l├║c, l├ám sao ch├║ng biß║┐t ai l├á ng╞░ß╗¥i chß╗ë huy? Hß╗ç thß╗æng d├╣ng mß╗Öt thuß║¡t to├ín gß╗ìi l├á "Raft Consensus".
++
++C╞í chß║┐ hoß║ít ─æß╗Öng cß╗▒c kß╗│ th├║ vß╗ï nh╞░ sau:
++- Trß║íng th├íi ban ─æß║ºu: Khi mß╗¢i khß╗ƒi ─æß╗Öng, tß║Ñt cß║ú c├íc Node ─æß╗üu ß╗ƒ trß║íng th├íi "Follower" (Ng╞░ß╗¥i theo d├╡i).
++- Nhß╗ïp tim (Heartbeat/Ping): Ng╞░ß╗¥i ─æang l├ám Leader sß║╜ li├¬n tß╗Ñc gß╗¡i tin nhß║»n "Ping" (nhß╗ïp tim) cho c├íc Follower mß╗ùi gi├óy 1 lß║ºn ─æß╗â b├ío: "Alo, t├┤i vß║½n c├▓n sß╗æng v├á ─æang l├ám Leader nh├⌐!".
++- Bß║ºu cß╗¡ (Election): Nß║┐u qu├í 5 gi├óy m├á mß╗Öt Follower kh├┤ng nhß║¡n ─æ╞░ß╗úc "Ping" tß╗½ Leader (c├│ thß╗â Leader ─æ├ú bß╗ï sß║¡p nguß╗ôn), Follower n├áy sß║╜ tß╗▒ ─æß╗ü cß╗¡ m├¼nh l├¬n l├ám "Candidate" (ß╗¿ng cß╗¡ vi├¬n).
++- K├¬u gß╗ìi bß║ºu chß╗ìn: Candidate sß║╜ gß╗¡i tin nhß║»n "/vote" cho tß║Ñt cß║ú c├íc m├íy kh├íc. M├íy n├áo sß╗æng sß║╜ gß╗¡i lß║íi phiß║┐u bß║ºu.
++- ─Éß║»c cß╗¡: Nß║┐u Candidate nhß║¡n ─æ╞░ß╗úc qu├í nß╗¡a sß╗æ phiß║┐u bß║ºu (V├¡ dß╗Ñ c├│ 3 m├íy, nhß║¡n ─æ╞░ß╗úc 2 phiß║┐u), n├│ sß║╜ ch├¡nh thß╗⌐c l├¬n l├ám Leader mß╗¢i. C├íc m├íy kh├íc tß╗▒ ─æß╗Öng quay vß╗ü l├ám Follower.
++
++
++3. QUY TR├îNH Xß╗¼ L├¥ ─É╞áN H├ÇNG Cß╗ªA KH├üCH (ClientController & ProcessingService)
++------------------------------------------------------------------------
++Khi bß║ín (Kh├ích h├áng) gß╗¡i c├óu hß╗Åi (V├¡ dß╗Ñ: "T├┤i muß╗æn ─ân g├á n╞░ß╗¢ng d╞░ß╗¢i 30 ph├║t"):
++
++B╞»ß╗ÜC 1: TIß║╛P NHß║¼N
++- Lß╗çnh gß╗ìi sß║╜ ─æi v├áo `ClientController`. Chß╗ë c├│ m├íy n├áo ─æang l├ám Leader mß╗¢i ─æ╞░ß╗úc ph├⌐p nhß║¡n lß╗çnh n├áy.
++- Leader tß║ío ra mß╗Öt m├ú sß╗æ theo d├╡i (V├¡ dß╗Ñ: ID = 1234) v├á l╞░u v├áo bß╗Ö nhß╗¢. Trß║íng th├íi ─æ╞ín h├áng l├á: "received" (─æ├ú nhß║¡n). Trß║ú ngay m├ú sß╗æ 1234 cho kh├ích ─æß╗â kh├ích tß╗▒ check tiß║┐n ─æß╗Ö sau.
++
++B╞»ß╗ÜC 2: PH├éN T├ìCH (Giao cho LLM-Node)
++- Dß╗ïch vß╗Ñ `ProcessingService` sß║╜ thß║Ñy c├│ ─æ╞ín h├áng mß╗¢i. N├│ liß╗ün gß╗¡i c├óu hß╗Åi cß╗ºa kh├ích sang cho `llm-node`.
++- `llm-node` (c├│ t├¡ch hß╗úp AI Gemini) sß║╜ ph├ón t├¡ch c├óu "T├┤i muß╗æn ─ân g├á n╞░ß╗¢ng d╞░ß╗¢i 30 ph├║t" th├ánh mß╗Öt danh s├ích c├íc bß╗Ö lß╗ìc cß╗Ñ thß╗â (Thß╗ït: G├á, Thß╗¥i gian: 30p).
++- Sau khi AI ph├ón t├¡ch xong, trß║íng th├íi ─æ╞ín h├áng ─æß╗òi th├ánh: "decomposed" (─æ├ú ph├ón t├¡ch).
++
++B╞»ß╗ÜC 3: T├îM KIß║╛M (Giao cho Recipe-Node)
++- Dß╗▒a v├áo danh s├ích bß╗Ö lß╗ìc vß╗½a c├│, `ProcessingService` lß║íi gß╗¡i lß╗çnh sang cho `recipe-node`.
++- `recipe-node` sß║╜ lß╗Ñc lß╗ìi trong Database (Qdrant) ─æß╗â t├¼m c├íc c├┤ng thß╗⌐c nß║Ñu g├á ngon nhß║Ñt v├á khß╗¢p thß╗¥i gian nhß║Ñt.
++- Sau khi t├¼m xong, trß║íng th├íi ─æ╞ín h├áng ─æß╗òi th├ánh: "recipes_found" (─æ├ú t├¼m thß║Ñy c├┤ng thß╗⌐c).
++
++B╞»ß╗ÜC 4: Tß╗öNG Hß╗óP C├éU TRß║ó Lß╗£I (Giao lß║íi cho LLM-Node)
++- `ProcessingService` gom danh s├ích c├┤ng thß╗⌐c vß╗½a t├¼m ─æ╞░ß╗úc, gß╗¡i lß║íi cho AI (`llm-node`) mß╗Öt lß║ºn nß╗»a.
++- Tr├¡ tuß╗ç nh├ón tß║ío sß║╜ ─æß╗ìc c├┤ng thß╗⌐c v├á viß║┐t ra mß╗Öt c├óu trß║ú lß╗¥i th├ón thiß╗çn (V├¡ dß╗Ñ: "Ch├áo bß║ín, ─æ├óy l├á 3 m├│n g├á tuyß╗çt vß╗¥i d├ánh cho bß║ín...").
++- Trß║íng th├íi cuß╗æi c├╣ng ─æß╗òi th├ánh: "done" (ho├án tß║Ñt).
++
++B╞»ß╗ÜC 5: TRß║ó Kß║╛T QUß║ó CHO KH├üCH
++- Kh├ích h├áng thß╗ënh thoß║úng gß╗ìi lß║íi API `/get?id=1234` ─æß╗â hß╗Åi th─âm tiß║┐n ─æß╗Ö. 
++- Khi trß║íng th├íi ─æ├ú l├á "done", Coordinator sß║╜ trß║ú nguy├¬n v─ân c├óu trß║ú lß╗¥i cß╗ºa AI v├á danh s├ích c├┤ng thß╗⌐c cho Kh├ích.
++
++
++4. ─Éß║óM Bß║óO KH├öNG Mß║ñT Dß╗« LIß╗åU (RequestStorage & ClusterController)
++------------------------------------------------------------------------
++- ─Éiß╗üu g├¼ xß║úy ra nß║┐u Leader ─æang xß╗¡ l├╜ ─æ╞ín h├áng ß╗ƒ B╞»ß╗ÜC 2 th├¼ bß╗ï r├║t ph├¡ch cß║»m (Sß║¡p server)?
++- ─Éß╗â tr├ính mß║Ñt ─æ╞ín h├áng, bß║Ñt cß╗⌐ khi n├áo Leader nhß║¡n ─æ╞░ß╗úc ─æ╞ín (hoß║╖c trß║íng th├íi ─æ╞ín thay ─æß╗òi), n├│ ─æß╗üu d├╣ng API nß╗Öi bß╗Ö (`/copy`) nß║▒m trong `ClusterController` ─æß╗â copy dß╗» liß╗çu ─æ├│ sang cho c├íc m├íy Follower. (Phß║ºn n├áy do `RequestStorage` ─æß║úm nhß║¡n).
++- Khi Leader chß║┐t, mß╗Öt Follower kh├íc ─æ╞░ß╗úc bß║ºu l├¬n l├ám Leader. V├¼ n├│ ─æ├ú c├│ sß║╡n bß║ún copy cß╗ºa ─æ╞ín h├áng, n├│ sß║╜ tiß║┐p tß╗Ñc xß╗¡ l├╜ B╞»ß╗ÜC 3, B╞»ß╗ÜC 4 mß╗Öt c├ích m╞░ß╗út m├á nh╞░ ch╞░a tß╗½ng c├│ chuyß╗çn g├¼ xß║úy ra!
++
++========================================================================
++Tß╗öNG Kß║╛T:
++Coordinator kh├┤ng nß║Ñu ─ân, kh├┤ng l├ám AI, kh├┤ng chß╗⌐a Database. N├│ l├á mß╗Öt bß╗Ö n├úo quß║ún l├╜ luß╗ông c├┤ng viß╗çc tuyß╗çt vß╗¥i, c├│ khß║ú n─âng tß╗▒ ─æß╗Öng thay thß║┐ nhau khi sß║¡p, ─æß║úm bß║úo dß╗» liß╗çu kh├┤ng bao giß╗¥ mß║Ñt v├á mß╗ìi y├¬u cß║ºu cß╗ºa kh├ích h├áng ─æß╗üu ─æ╞░ß╗úc xß╗¡ l├╜ tß║¡n t├¼nh bß╗ƒi c├íc bß╗Ö phß║¡n chuy├¬n m├┤n.
++========================================================================
+diff --git "a/e:\\PullTest\\coor\\coordinator/runc.bat" "b/e:\\DS\\my-spring-project\\coordinator/runc.bat"
+index f05559e..655f84e 100644
+--- "a/e:\\PullTest\\coor\\coordinator/runc.bat"
++++ "b/e:\\DS\\my-spring-project\\coordinator/runc.bat"
+@@ -1,2 +1,2 @@
+ cd coordinator
+-java -jar target/coordinator-1.0.0.jar
+\ No newline at end of file
++java -jar target/coordinator-1.0.0.jar --join_existed=true
+\ No newline at end of file
+diff --git "a/e:\\PullTest\\coor\\coordinator/src/main/java/com/example/coordinator/config/RestTemplateConfig.java" "b/e:\\DS\\my-spring-project\\coordinator/src/main/java/com/example/coordinator/config/RestTemplateConfig.java"
+index 5f6a00d..f8d2fda 100644
+--- "a/e:\\PullTest\\coor\\coordinator/src/main/java/com/example/coordinator/config/RestTemplateConfig.java"
++++ "b/e:\\DS\\my-spring-project\\coordinator/src/main/java/com/example/coordinator/config/RestTemplateConfig.java"
+@@ -2,6 +2,7 @@ package com.example.coordinator.config;
+ 
+ import org.springframework.context.annotation.Bean;
+ import org.springframework.context.annotation.Configuration;
++import org.springframework.http.client.SimpleClientHttpRequestFactory;
+ import org.springframework.web.client.RestTemplate;
+ 
+ @Configuration
+@@ -9,6 +10,9 @@ public class RestTemplateConfig {
+ 
+     @Bean
+     public RestTemplate restTemplate() {
+-        return new RestTemplate();
++        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
++        factory.setConnectTimeout(10000); // 10 seconds
++        factory.setReadTimeout(120000);   // 120 seconds
++        return new RestTemplate(factory);
+     }
+ }
+\ No newline at end of file
+diff --git "a/e:\\DS\\my-spring-project\\coordinator/src/main/java/com/example/coordinator/controller/ClientController.java" "b/e:\\DS\\my-spring-project\\coordinator/src/main/java/com/example/coordinator/controller/ClientController.java"
+new file mode 100644
+index 0000000..82dcd03
+--- /dev/null
++++ "b/e:\\DS\\my-spring-project\\coordinator/src/main/java/com/example/coordinator/controller/ClientController.java"
+@@ -0,0 +1,40 @@
++package com.example.coordinator.controller;
++
++import org.springframework.http.ResponseEntity;
++import org.springframework.web.bind.annotation.GetMapping;
++import org.springframework.web.bind.annotation.PostMapping;
++import org.springframework.web.bind.annotation.RequestBody;
++import org.springframework.web.bind.annotation.RequestMapping;
++import org.springframework.web.bind.annotation.RequestParam;
++import org.springframework.web.bind.annotation.RestController;
++
++import com.example.coordinator.model.UserRequest;
++import com.example.coordinator.service.CoordinatorService;
++import com.example.shared.model.LLMRequest;
++import com.example.shared.model.SearchResponse;
++
++@RestController
++@RequestMapping("/")
++public class ClientController {
++
++    private final CoordinatorService coordinatorService;
++
++    public ClientController(CoordinatorService coordinatorService) {
++        this.coordinatorService = coordinatorService;
++    }
++
++    @PostMapping("/search")
++    public String search(@RequestBody LLMRequest request) {
++        return coordinatorService.search(request);
++    }
++
++    @GetMapping("/get")
++    public ResponseEntity<SearchResponse> get(@RequestParam String id) {
++        return coordinatorService.get(id);
++    } 
++
++    @GetMapping("/gettest") // just for test
++    public UserRequest getTest(@RequestParam String id) {
++        return coordinatorService.getTest(id);
++    }
++}
+diff --git "a/e:\\PullTest\\coor\\coordinator/src/main/java/com/example/coordinator/controller/SearchController.java" "b/e:\\DS\\my-spring-project\\coordinator/src/main/java/com/example/coordinator/controller/ClusterController.java"
+similarity index 54%
+rename from "e:\\PullTest\\coor\\coordinator/src/main/java/com/example/coordinator/controller/SearchController.java"
+rename to "e:\\DS\\my-spring-project\\coordinator/src/main/java/com/example/coordinator/controller/ClusterController.java"
+index f3a8b91..79f00c6 100644
+--- "a/e:\\PullTest\\coor\\coordinator/src/main/java/com/example/coordinator/controller/SearchController.java"
++++ "b/e:\\DS\\my-spring-project\\coordinator/src/main/java/com/example/coordinator/controller/ClusterController.java"
+@@ -1,87 +1,57 @@
+ package com.example.coordinator.controller;
+ 
+-import java.util.List;
+-
+-import org.springframework.web.bind.annotation.GetMapping;
+ import org.springframework.web.bind.annotation.PostMapping;
+-import org.springframework.web.bind.annotation.RequestMapping;
+ import org.springframework.web.bind.annotation.RequestBody;
++import org.springframework.web.bind.annotation.RequestMapping;
+ import org.springframework.web.bind.annotation.RequestParam;
+ import org.springframework.web.bind.annotation.RestController;
+ 
+-import com.example.coordinator.service.CoordinatorService;
+-import com.example.coordinator.service.ProcessingService;
++import com.example.coordinator.model.NodesInfo;
++import com.example.coordinator.model.UserRequest;
++import com.example.coordinator.model.VoteRequest;
+ import com.example.coordinator.service.ConsensusService;
+ import com.example.coordinator.service.RequestStorage;
+ 
+-import com.example.coordinator.model.VoteRequest;
+-import com.example.coordinator.model.UserRequest;
+-import com.example.coordinator.model.NodesInfo;
+-
+-import com.example.shared.model.LLMRequest;
+-
+-
+ @RestController
+ @RequestMapping("/")
+-public class SearchController {
++public class ClusterController {
+ 
+-    private final CoordinatorService coordinatorService;
+     private final ConsensusService consensus;
+-    private final ProcessingService processingService;
+     private final RequestStorage storage;
+ 
+-    public SearchController(CoordinatorService coordinatorService, ConsensusService consensus, 
+-            ProcessingService processingService, RequestStorage storage) {
+-        this.coordinatorService = coordinatorService;
++    public ClusterController(ConsensusService consensus, RequestStorage storage) {
+         this.consensus = consensus;
+-        this.processingService = processingService;
+         this.storage = storage;
+     }
+-    // create request
+-    @PostMapping("/search")
+-    public String search(@RequestBody LLMRequest request) {
+-        return coordinatorService.search(request);
+-    }
+-    // get request's result
+-    @GetMapping("/get")
+-    public String get(@RequestParam String id) {
+-        return coordinatorService.get(id);
+-    } 
+-    // copy request to node
++
+     @PostMapping("/copy") 
+     public boolean copy(@RequestBody UserRequest request) { 
+         storage.storeRequest(request.getId(), request);
+         return true;
+     }
+-    // ping node
++
+     @PostMapping("/ping") 
+     public boolean ping(@RequestParam String id, @RequestParam int term) { 
+         return consensus.ping(id, term);
+     }
+-    // ask for vote from node
++
+     @PostMapping("/vote") 
+     public boolean vote(@RequestBody VoteRequest request) { 
+         return consensus.vote(request);
+     }
+-    // join as coordinator with node's network
++
+     @PostMapping("/join") 
+     public NodesInfo join(@RequestParam String id) { 
+         return consensus.join(id);
+     }
+-    // join as llm node or recipe node with node's network
++
+     @PostMapping("/apply") 
+     public boolean apply(@RequestParam String id, @RequestParam String type) { 
+         return consensus.apply(id, type);
+     }
+-    // control node to join another node's network
++
+     @PostMapping("/follow") 
+     public boolean follow(@RequestParam String id) { 
+         return consensus.follow(id);
+     }
+-
+-
+-    @GetMapping("/gettest") // just for test TO DO: delete
+-    public UserRequest getTest(@RequestParam String id) {
+-        return coordinatorService.getTest(id);
+-    }
+-}
+\ No newline at end of file
++}
+diff --git "a/e:\\PullTest\\coor\\coordinator/src/main/java/com/example/coordinator/model/UserRequest.java" "b/e:\\DS\\my-spring-project\\coordinator/src/main/java/com/example/coordinator/model/UserRequest.java"
+index d4bdd0b..a2b6a55 100644
+--- "a/e:\\PullTest\\coor\\coordinator/src/main/java/com/example/coordinator/model/UserRequest.java"
++++ "b/e:\\DS\\my-spring-project\\coordinator/src/main/java/com/example/coordinator/model/UserRequest.java"
+@@ -1,11 +1,10 @@
+ package com.example.coordinator.model;
+ 
+-import java.util.List;
+ import java.time.LocalDateTime;
++import java.util.List;
+ 
+ import com.example.shared.model.RecipeQuery;
+ import com.example.shared.model.RecipeQueryResult;
+-import com.example.shared.model.StatusState;
+ 
+ public class UserRequest {
+     private String id;
+diff --git "a/e:\\PullTest\\coor\\coordinator/src/main/java/com/example/coordinator/service/ConsensusService.java" "b/e:\\DS\\my-spring-project\\coordinator/src/main/java/com/example/coordinator/service/ConsensusService.java"
+index 00b909d..25102fe 100644
+--- "a/e:\\PullTest\\coor\\coordinator/src/main/java/com/example/coordinator/service/ConsensusService.java"
++++ "b/e:\\DS\\my-spring-project\\coordinator/src/main/java/com/example/coordinator/service/ConsensusService.java"
+@@ -1,28 +1,25 @@
+ package com.example.coordinator.service;
+ 
+-import org.springframework.stereotype.Component;
+-import org.springframework.beans.factory.annotation.Value;
+-import org.springframework.scheduling.annotation.Scheduled;
+-
+-import org.springframework.web.client.RestTemplate;
+-import org.springframework.web.util.UriComponentsBuilder;
+-
+-import org.springframework.http.HttpEntity;
+-import org.springframework.http.HttpHeaders;
+-import org.springframework.http.MediaType;
+-
+-import java.util.List;
+-import java.util.HashSet;
+ import java.util.ArrayList;
+-
++import java.util.List;
++import java.util.Set;
++import java.util.concurrent.ConcurrentHashMap;
+ import java.util.concurrent.ThreadLocalRandom;
+ import java.util.concurrent.atomic.AtomicBoolean;
+ import java.util.concurrent.atomic.AtomicInteger;
+ 
+-import com.example.coordinator.model.VoteRequest;
+-import com.example.coordinator.model.UserRequest;
++import org.springframework.beans.factory.annotation.Value;
++import org.springframework.http.HttpEntity;
++import org.springframework.http.HttpHeaders;
++import org.springframework.http.MediaType;
++import org.springframework.scheduling.annotation.Scheduled;
++import org.springframework.stereotype.Component;
++import org.springframework.web.client.RestClientException;
++import org.springframework.web.client.RestTemplate;
++import org.springframework.web.util.UriComponentsBuilder;
++
+ import com.example.coordinator.model.NodesInfo;
+-import com.example.shared.model.LLMRequest;
++import com.example.coordinator.model.VoteRequest;
+ 
+ @Component 
+ public class ConsensusService {
+@@ -30,15 +27,14 @@ public class ConsensusService {
+     private final ProcessingService processingService;
+     private final RequestStorage storage;
+ 
+-    private final HashSet<String> nodesList = new HashSet<>();
+-    @Value("${server.port:8080}")
+-    private String nodeId; 
+-
+-    private volatile String nodeStatus; 
+-    private volatile String leaderId; 
+-    private boolean leaderAlive;
++    private final Set<String> nodesList = ConcurrentHashMap.newKeySet();
++    @Value("${node.id:${server.port:8080}}")
++    private String nodeId; // do I need to sync???
++    private final AtomicBoolean voted = new AtomicBoolean(false);
++    
++    public volatile String nodeStatus; // do I need to sync???
++    public volatile String leaderId; // do I need to sync???
+     public AtomicInteger term;
+-        private AtomicBoolean voted;
+ 
+     public ConsensusService(RestTemplate restTemplate, 
+             ProcessingService processingService, RequestStorage storage) {
+@@ -46,13 +42,16 @@ public class ConsensusService {
+         this.processingService = processingService;
+         this.storage = storage;
+ 
+-        this.voted = new AtomicBoolean(false);
++        this.voted.set(false);
+         this.nodeStatus = "follower";
+         this.leaderId = null;
+-        this.leaderAlive = false;
+         this.term = new AtomicInteger(0);
+         }
+ 
++    /**
++     * Handles incoming Raft vote requests from candidates.
++     * Grants vote if the candidate's term is greater or equal and it has sufficient requests.
++     */
+     public boolean vote(VoteRequest request) { 
+         int requestCount = storage.getRequestList().size();
+ 
+@@ -61,11 +60,9 @@ public class ConsensusService {
+                 this.term.set(request.getTerm());
+                 this.voted.set(false);
+             }
+-
+             int candidateRequestCount = request.getRequestCount();
+-            if (candidateRequestCount >= requestCount && this.voted.compareAndSet(false, true)) {
+-                this.leaderId = request.getCandidateId();
+-                this.leaderAlive = true;
++            
++            if (this.voted.compareAndSet(false, true)) {
+                 this.nodeStatus = "follower";
+                 processingService.setIsLeader(false);
+                 return true;
+@@ -74,46 +71,58 @@ public class ConsensusService {
+         return false;
+     }
+ 
++    /**
++     * Receives heartbeats from the Leader.
++     * Resets the election timeout and updates the current term.
++     */
+     public boolean ping(String id, int term) {
++        // if (term >= this.term) {
+         if (term >= this.term.get()) {
+             this.leaderId = id;
+-            this.leaderAlive = true;
+             this.nodeStatus = "follower";
+             processingService.setIsLeader(false);
+             this.term.set(term);
++
+             return true;
+         } else {return false;}
+     }
+ 
++    /**
++     * Registers a new node to the cluster.
++     * If this node is the leader, it broadcasts the new node to all followers.
++     */
+     public NodesInfo join(String id) {
+         if (nodeStatus.equals("leader")) {
+             Boolean validity = false;
+             try {
+-                String targetUrl = "http://localhost:" + id + "/ping";
++                String targetUrl = formatUrl(id, "/ping");
+                 String urlTemplate = UriComponentsBuilder.fromHttpUrl(targetUrl)
+                         .queryParam("id", nodeId)
++                        // .queryParam("term", this.term)
+                         .queryParam("term", this.term.get())
+                         .encode()
+                         .toUriString();
+ 
+                 validity = restTemplate.postForObject(urlTemplate, null, Boolean.class);
+-            } catch (Exception e) {System.out.println("Ping failed.");}
++            } catch (RestClientException e) { System.out.println("Ping failed.");}
+ 
+-            if (validity) {
++            if (Boolean.TRUE.equals(validity)) {
+                 nodesList.add(id);
+                 storage.addNode(id);
+ 
+                 for (String node : nodesList) {
+                     try {
+-                    String targetUrl = "http://localhost:" + node + "/join";
+-                    String urlTemplate = UriComponentsBuilder.fromHttpUrl(targetUrl)
+-                            .queryParam("id", id)
+-                            .encode()
+-                            .toUriString();
+-                    restTemplate.postForObject(urlTemplate, null, Boolean.class);
+-                    } catch (Exception e) {System.out.println("Ping failed.");}
++                        String targetUrl = formatUrl(node, "/join");
++                        String urlTemplate = UriComponentsBuilder.fromHttpUrl(targetUrl)
++                                .queryParam("id", id)
++                                .encode()
++                                .toUriString();
++                        restTemplate.postForObject(urlTemplate, null, Boolean.class);
++                    } catch (RestClientException e) { System.out.println("Ping failed.");}
+                 }
+-                List coordinators = new ArrayList<>(nodesList);
++
++                List<String> coordinators = new ArrayList<>(nodesList);
++
+                 coordinators.add(nodeId);
+                 coordinators.remove(id);
+ 
+@@ -132,10 +141,13 @@ public class ConsensusService {
+         return null;
+     }
+ 
++    /**
++     * Forces this node to follow a new leader.
++     */
+     public boolean follow(String id) {
+         if (id.equals(nodeId)) {return false;}
+         try {
+-            String targetUrl = "http://localhost:" + id + "/join";
++            String targetUrl = formatUrl(id, "/join");
+             String urlTemplate = UriComponentsBuilder.fromHttpUrl(targetUrl)
+                     .queryParam("id", nodeId)
+                     .encode()
+@@ -163,20 +175,19 @@ public class ConsensusService {
+ 
+     public boolean apply(String id, String type) {
+         if (nodeStatus.equals("leader")) {
+-            // Later: try service first, to prevent fraud
+-
++            // try service first??
+             processingService.apply(id, type);
+             for (String node : nodesList) {
+                 try {
+-                String targetUrl = "http://localhost:" + node + "/apply";
++                String targetUrl = formatUrl(node, "/apply");
+                 String urlTemplate = UriComponentsBuilder.fromHttpUrl(targetUrl)
+                         .queryParam("id", id)
+                         .queryParam("type", type)
+                         .encode()
+                         .toUriString();
+-                boolean result = restTemplate.postForObject(urlTemplate, null, Boolean.class);
+-                if (!result) return result;
+-                } catch (Exception e) {System.out.println("Broadcasting new worker nodes failed.");}
++                // return restTemplate.postForObject(urlTemplate, null, Boolean.class);
++                restTemplate.postForObject(urlTemplate, null, Boolean.class);
++                } catch (RestClientException e) { System.out.println("Broadcasting new worker nodes failed.");}
+             }
+             return true;
+         } else {
+@@ -185,34 +196,25 @@ public class ConsensusService {
+         return false;
+     }
+ 
+-    public String redirect(LLMRequest request) {
+-        System.out.println("Redirecting..");
+-        if (leaderId != null) {
+-            try {
+-                String targetUrl = "http://localhost:" + leaderId + "/search";
+-                HttpHeaders headers = new HttpHeaders();
+-                headers.setContentType(MediaType.APPLICATION_JSON);
+-                HttpEntity<LLMRequest> entity = new HttpEntity<>(request, headers);
+-                return restTemplate.postForObject(targetUrl, entity, String.class);
+-            } catch (Exception e) {System.out.println("Redirecting fails.");}
+-        }
+-        return null;
+-    }
+-
++    /**
++     * Leader continuously pings followers to maintain authority.
++     * Steps down to follower if a ping fails significantly (split brain prevention).
++     */
+     @Scheduled(fixedDelay = 1000)
+     public void pingingThread() {
+         if (nodeStatus.equals("leader")) {
+             for (String node : nodesList) {
+                 try {
+-                    String targetUrl = "http://localhost:" + node + "/ping";
++                    String targetUrl = formatUrl(node, "/ping");
+                     String urlTemplate = UriComponentsBuilder.fromHttpUrl(targetUrl)
+                             .queryParam("id", nodeId)
++                            // .queryParam("term", this.term)
+                             .queryParam("term", this.term.get())
+                             .encode()
+                             .toUriString();
+ 
+                     Boolean response = restTemplate.postForObject(urlTemplate, null, Boolean.class);
+-                    if (!response) {
++                    if (response == null || !response) {
+                         nodeStatus = "follower"; 
+                         processingService.setIsLeader(false);
+                         }
+@@ -222,25 +224,38 @@ public class ConsensusService {
+         }
+     }
+ 
++    /**
++     * Follower timeout checker. If no heartbeat is received from the leader
++     * within the threshold, this node becomes a candidate and starts an election.
++     */
+     @Scheduled(fixedDelay = 5000)
+     public void scheduledTask() {
++        // System.out.println("Current Status: " + this.nodeStatus + " " + this.term);
+         System.out.println("Current Status: " + this.nodeStatus + " " + this.term.get());
+-        System.out.println(nodesList);
+-
+-        if (this.nodeStatus == "follower") {
+-            if (this.leaderAlive) {this.leaderAlive = false;}
++        if (this.nodeStatus.equals("follower")) {
++            if (this.leaderId != null) {this.leaderId = null;}
+             else {
+                 this.nodeStatus = "candidate";
+-                this.leaderId = null;
+                 processingService.setIsLeader(false);
+-                while (this.nodeStatus.equals("candidate")) {
+-                    try {
++                new Thread(this::runElection).start();
++            }
++        }
++    }
++
++    /**
++     * Executes the Raft leader election process.
++     * Requests votes from all known nodes and becomes Leader if the majority grants the vote.
++     */
++    private void runElection() {
++        while (this.nodeStatus.equals("candidate")) {
++            try {
+                         long randomDelay = ThreadLocalRandom.current().nextLong(1000, 2000 + 1);
+                         Thread.sleep(randomDelay);
+-                    } catch (Exception e) {}
++                    } catch (InterruptedException ignore) {}
+ 
+-                    if (!this.nodeStatus.equals("candidate")) {return;}
++                    if (!this.nodeStatus.equals("candidate")) return;
+ 
++                    // this.term = term + 1;
+                     this.term.incrementAndGet();
+                     this.voted.set(false);
+                     int vote = 1;
+@@ -248,31 +263,43 @@ public class ConsensusService {
+                     VoteRequest request = new VoteRequest();
+                     request.setRequestCount(storage.getRequestList().size());
+                     request.setCandidateId(this.nodeId);
++
++                    // request.setRequestCount(4);
++
++                    // request.setTerm(this.term);
+                     request.setTerm(this.term.get());
+ 
+-                    System.out.println("Start election " + this.term);
++                    // System.out.println("Start election " + this.term);
++                    System.out.println("Start election " + this.term.get());
++
++                    // check status again maybe??
+                     for (String node : nodesList) {
+                         try {
+-                            String targetUrl = "http://localhost:" + node + "/vote";
++                            String targetUrl = formatUrl(node, "/vote");
+                             HttpHeaders headers = new HttpHeaders();
+                             headers.setContentType(MediaType.APPLICATION_JSON);
+                             HttpEntity<VoteRequest> entity = new HttpEntity<>(request, headers);
+                             Boolean result = restTemplate.postForObject(targetUrl, entity, Boolean.class);
++                            // if (result) {vote = vote + 1;}
+                             if (Boolean.TRUE.equals(result)) {vote = vote + 1;}
+-                        } catch (Exception e) {System.out.println("Ask for vote failed.");}
++                        } catch (RestClientException e) { System.out.println("Ask for vote failed.");}
+                     }
+ 
+                     if (vote > ((nodesList.size() + 1) / 2) && this.nodeStatus.equals("candidate")) {
+                         this.nodeStatus = "leader";
+-                        this.leaderId = null;
+                         processingService.setIsLeader(true);
+-                        processingService.processingThread();
++                        processingService.processingThread(); 
+                         processingService.updateQueue();
+                         System.out.println("Won");
+                     }
+                     else {System.out.println("Lost");}
+                 }
+-            }
++    }
++
++    private String formatUrl(String idOrAddress, String path) {
++        if (idOrAddress.contains(":") || idOrAddress.contains(".") || idOrAddress.equalsIgnoreCase("localhost")) {
++            return "http://" + idOrAddress + path;
+         }
++        return "http://localhost:" + idOrAddress + path;
+     }
+ }
+\ No newline at end of file
+diff --git "a/e:\\PullTest\\coor\\coordinator/src/main/java/com/example/coordinator/service/CoordinatorService.java" "b/e:\\DS\\my-spring-project\\coordinator/src/main/java/com/example/coordinator/service/CoordinatorService.java"
+index 5139f30..1d4282a 100644
+--- "a/e:\\PullTest\\coor\\coordinator/src/main/java/com/example/coordinator/service/CoordinatorService.java"
++++ "b/e:\\DS\\my-spring-project\\coordinator/src/main/java/com/example/coordinator/service/CoordinatorService.java"
+@@ -1,20 +1,13 @@
+ package com.example.coordinator.service;
+ 
+-import org.springframework.core.ParameterizedTypeReference;
+-import org.springframework.http.HttpEntity;
+-import org.springframework.http.HttpMethod;
++import java.time.LocalDateTime;
++import java.util.UUID;
++
+ import org.springframework.http.ResponseEntity;
+ import org.springframework.stereotype.Service;
+ import org.springframework.web.client.RestTemplate;
+ 
+-import java.util.ArrayList;
+-import java.util.List;
+-import java.util.UUID;
+-
+-import java.time.LocalDateTime;
+-
+ import com.example.coordinator.model.UserRequest;
+-
+ import com.example.shared.model.LLMRequest;
+ 
+ 
+@@ -24,14 +17,12 @@ public class CoordinatorService {
+     private final RestTemplate restTemplate;
+     private final ProcessingService processingService;
+     private final RequestStorage storage;
+-    private final ConsensusService consensus;
+     
+-    public CoordinatorService(RestTemplate restTemplate, ConsensusService consensus,
++    public CoordinatorService(RestTemplate restTemplate, 
+             RequestStorage storage, ProcessingService processingService) {
+         this.restTemplate = restTemplate;
+         this.processingService = processingService;
+-        this.storage = storage; 
+-        this.consensus = consensus;
++        this.storage = storage;
+     }
+ 
+     public String search(LLMRequest request) { 
+@@ -43,26 +34,47 @@ public class CoordinatorService {
+             userRequest.setId(id);
+             userRequest.setState("received");
+             userRequest.setUserQuery(request.getUserQuery());
+-            userRequest.setTtl(LocalDateTime.now().plusSeconds(300));
++            
++            // userRequest.setTtl(LocalDateTime.now().plusSeconds(30));
++            userRequest.setTtl(LocalDateTime.now().plusMinutes(5));
+ 
+-            processingService.addToQueue(id);
+             storage.storeRequest(id, userRequest);
++            processingService.addToQueue(id);
+             storage.broadCastCopy(userRequest);
+ 
+             return id;
+         } else {
+-            return consensus.redirect(request);
++            return "Rejected, not leading.";
+         }
+     }
+ 
+-    public String get(String id) {
++    public ResponseEntity<com.example.shared.model.SearchResponse> get(String id) {
+         UserRequest request = storage.getRequest(id);
+-        if (request == null) {return "Id does not exist.";}
+-        if (request.getState().equals("done")) {return request.getResult();} 
+-        else {return request.getState();}
++        if (request == null) {
++            return ResponseEntity.notFound().build();
++        }
++        
++        com.example.shared.model.SearchResponse response = new com.example.shared.model.SearchResponse();
++        if ("done".equals(request.getState())) {
++            response.setState(com.example.shared.model.StatusState.SUCCESS);
++            response.setAnswer(request.getResult());
++            response.setRecipes(request.getRecipeQueryResults());
++        } else if ("error".equals(request.getState())) {
++            response.setState(com.example.shared.model.StatusState.FAILED);
++        } else if ("received".equals(request.getState())) {
++            response.setState(com.example.shared.model.StatusState.RECEIVED);
++        } else {
++            response.setState(com.example.shared.model.StatusState.PENDING);
++        }
++        return ResponseEntity.ok(response);
+     }
+ 
+     public UserRequest getTest(String id) {
+         return storage.getRequest(id); 
+     }
++
++
++    public boolean copy(UserRequest request) { 
++        return storage.storeRequest(request.getId(), request);
++    }
+ }
+\ No newline at end of file
+diff --git "a/e:\\PullTest\\coor\\coordinator/src/main/java/com/example/coordinator/service/ProcessingService.java" "b/e:\\DS\\my-spring-project\\coordinator/src/main/java/com/example/coordinator/service/ProcessingService.java"
+index fa87817..e04a083 100644
+--- "a/e:\\PullTest\\coor\\coordinator/src/main/java/com/example/coordinator/service/ProcessingService.java"
++++ "b/e:\\DS\\my-spring-project\\coordinator/src/main/java/com/example/coordinator/service/ProcessingService.java"
+@@ -1,44 +1,42 @@
+ package com.example.coordinator.service;
+ 
+-import org.springframework.stereotype.Service;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Set;
++import java.util.concurrent.ConcurrentHashMap;
++import java.util.concurrent.Executors;
++import java.util.concurrent.ScheduledExecutorService;
++import java.util.concurrent.ThreadLocalRandom;
++import java.util.concurrent.TimeUnit;
++import java.util.concurrent.LinkedBlockingQueue;
+ 
+-import org.springframework.core.ParameterizedTypeReference;
++import com.fasterxml.jackson.databind.JsonNode;
++import com.fasterxml.jackson.databind.ObjectMapper;
+ 
++import org.springframework.core.ParameterizedTypeReference;
+ import org.springframework.http.HttpEntity;
+ import org.springframework.http.HttpHeaders;
+ import org.springframework.http.HttpMethod;
+ import org.springframework.http.MediaType;
+ import org.springframework.http.ResponseEntity;
++import org.springframework.stereotype.Service;
+ import org.springframework.web.client.RestTemplate;
+ 
+ import com.example.coordinator.model.UserRequest;
+-
+ import com.example.shared.model.LLMRequest;
+ import com.example.shared.model.RecipeQuery;
+ import com.example.shared.model.RecipeQueryResult;
+ 
+-import java.util.concurrent.TimeUnit;
+-import java.util.concurrent.ThreadLocalRandom;
+-import java.util.concurrent.LinkedBlockingQueue;
+-import java.util.concurrent.ConcurrentHashMap;
+-import java.util.concurrent.Executors;
+-import java.util.concurrent.ScheduledExecutorService;
+-
+-import java.time.LocalDateTime;
+-
+-import java.util.ArrayList;
+-import java.util.List;
+-import java.util.HashSet;
+-
+ @Service
+ public class ProcessingService {
+ 
+     private final RestTemplate restTemplate;
+     private final RequestStorage storage;
+-    private boolean isLeader;
++    private volatile boolean isLeader;
++    private volatile boolean isProcessingThreadRunning = false;
+ 
+-    private final HashSet<String> llmNodes = new HashSet<>();
+-    private final HashSet<String> dbNodes = new HashSet<>();
++    private final Set<String> llmNodes = ConcurrentHashMap.newKeySet();
++    private final Set<String> dbNodes = ConcurrentHashMap.newKeySet();
+ 
+     private final LinkedBlockingQueue<String> requestQueue;
+     private final ScheduledExecutorService retryScheduler = Executors.newScheduledThreadPool(1);
+@@ -60,12 +58,17 @@ public class ProcessingService {
+         return this.isLeader;
+     }
+ 
++    public boolean isProcessingThreadRunning() {
++        return this.isProcessingThreadRunning;
++    }
++
+     public List<String> getLlmNodes() {
+         return new ArrayList<>(llmNodes);
+     }
+ 
+     public void setLlmNodes(List<String> list) {
+-        this.llmNodes.clear();
++        // this.llmNodes.clear();
++        this.llmNodes.retainAll(list);
+         this.llmNodes.addAll(list);
+     }
+ 
+@@ -74,7 +77,8 @@ public class ProcessingService {
+     }
+ 
+     public void setDbNodes(List<String> list) {
+-        this.dbNodes.clear();
++        // this.dbNodes.clear();
++        this.dbNodes.retainAll(list);
+         this.dbNodes.addAll(list);
+     }
+ 
+@@ -88,28 +92,37 @@ public class ProcessingService {
+     }
+ 
+     public void updateQueue() { 
+-        requestQueue.addAll(storage.getRequestList());
++        for (String id : storage.getRequestList()) {
++            UserRequest req = storage.getRequest(id);
++            if (req != null && !req.getState().equals("done") && !req.getState().equals("error")) {
++                requestQueue.offer(id);
++            }
++        }
+     } 
+ 
+     public boolean addToQueue(String id) {
+-        return requestQueue.offer(id);
+-    }
+-
+-    public boolean putToQueue(String id) {
+-        try {
++         try {
+             requestQueue.put(id);
+             return true;
+         } catch (Exception e) {return false;}
+     }
+ 
+     public void processingThread() {
++        if (isProcessingThreadRunning) return;
++        isProcessingThreadRunning = true;
++        // add time out??
+         Thread checkingThread = new Thread(() -> {
+-            while (isLeader) { 
+-                try {
+-                    String id = requestQueue.poll(1, TimeUnit.SECONDS); 
+-                    if (id == null) {continue;}
++            try {
++                while (isLeader) { 
++                    try {
++                    String id = requestQueue.poll(1, TimeUnit.SECONDS);
++                    if (id == null) continue;
++                    
+                     UserRequest request = storage.getRequest(id);
+-                    if (request == null) {continue;}
++                    if (request == null) {
++                        System.out.println("Request " + id + " was removed (e.g. TTL expired). Skipping.");
++                        continue;
++                    }
+ 
+                     if (request.getState().equals("received")) {
+                         LLMRequest llmRequest = new LLMRequest();
+@@ -120,19 +133,19 @@ public class ProcessingService {
+                             request.setState("formatted");
+                             request.setRecipeQuery(result);
+                             storage.storeRequest(id, request);
+-                            this.putToQueue(id);
++                            this.addToQueue(id);
+                             storage.broadCastCopy(request);
+                         } else {
+                             int retries = retryCounts.getOrDefault(id, 0) + 1;
+                             if (retries > 3) {
+                                 System.out.println("LLM decompose permanently failed for " + id);
++                                request.setState("error");
++                                storage.storeRequest(id, request);
+                                 retryCounts.remove(id);
+-                                request.setTtl(LocalDateTime.now());
+-                                storage.broadCastCopy(request);
+                             } else {
+                                 retryCounts.put(id, retries);
+                                 System.out.println("LLM decompose failed for " + id + ". Retrying in 5s... (attempt " + retries + ")");
+-                                retryScheduler.schedule(() -> this.putToQueue(id), 5, TimeUnit.SECONDS);
++                                retryScheduler.schedule(() -> this.addToQueue(id), 5, TimeUnit.SECONDS);
+                             }
+                         }
+ 
+@@ -140,50 +153,79 @@ public class ProcessingService {
+                         RecipeQuery recipeQuery = request.getRecipeQuery();
+                         List<RecipeQueryResult> result = sendToDBNode(recipeQuery);
+ 
++                        // if (result != null) {
++                        //     request.setState("unformatted results");
++                        //     request.setRecipeQueryResults(result);
++                        //     storage.storeRequest(id, request);
++                        //     this.addToQueue(id);
++                        //     storage.broadCastCopy(request);
++                        // } else {
++                        //     System.out.println("No result, request failed.");
++                        //     //storage.deleteRequest(id);
++                        // }
++                        // 
++                        // request.setState("unformatted result");
++                        // storage.storeRequest(id, request);
++                        // this.addToQueue(id);
++                        // storage.broadCastCopy(request);
++                        // 
++                        // } else if (request.getState().equals("unformatted result")) {
+                         if (result != null && !result.isEmpty()) {
+-                            request.setState("unformatted results");
++                            request.setState("searched");
+                             request.setRecipeQueryResults(result);
+                             storage.storeRequest(id, request);
+-                            this.putToQueue(id);
++                            this.addToQueue(id);
+                             storage.broadCastCopy(request);
+                         } else {
+                             int retries = retryCounts.getOrDefault(id, 0) + 1;
+                             if (retries > 3) {
+                                 System.out.println("Recipe DB search permanently failed for " + id);
++                                request.setState("error");
++                                storage.storeRequest(id, request);
+                                 retryCounts.remove(id);
+-                                request.setTtl(LocalDateTime.now());
+-                                storage.broadCastCopy(request);
+                             } else {
+                                 retryCounts.put(id, retries);
+-                                System.out.println("Recipe DB search failed for " + id + ". Retrying in 5s... (attempt " + retries + ")");
+-                                retryScheduler.schedule(() -> this.putToQueue(id), 5, TimeUnit.SECONDS);
++                                System.out.println("Recipe DB search failed for " + id + " (result=" + (result == null ? "null" : "empty") + "). Retrying in 5s... (attempt " + retries + ")");
++                                retryScheduler.schedule(() -> this.addToQueue(id), 5, TimeUnit.SECONDS);
+                             }
+                         }
+ 
+-                    } else if (request.getState().equals("unformatted results")) {
+-                        String finalResult = sendToLLMAnswerNode(request);
++                    } else if (request.getState().equals("searched")) {
+ 
+-                        if (finalResult != null && !finalResult.isEmpty()) {
++
++                        
++                        String finalResult = sendToLLMAnswerNode(request);
++                        if (finalResult != null) {
+                             request.setState("done");
+-                            request.setResult(finalResult);
++                            try {
++                                ObjectMapper mapper = new ObjectMapper();
++                                JsonNode root = mapper.readTree(finalResult);
++                                if (root.has("answer")) {
++                                    request.setResult(root.get("answer").asText());
++                                } else {
++                                    request.setResult(finalResult);
++                                }
++                            } catch (Exception e) {
++                                request.setResult(finalResult);
++                            }
+                             storage.storeRequest(id, request);
+                             storage.broadCastCopy(request);
+                         } else {
+                             int retries = retryCounts.getOrDefault(id, 0) + 1;
+                             if (retries > 3) {
+                                 System.out.println("LLM answer generation permanently failed for " + id);
++                                request.setState("error");
++                                storage.storeRequest(id, request);
+                                 retryCounts.remove(id);
+-                                request.setTtl(LocalDateTime.now());
+-                                storage.broadCastCopy(request);
+                             } else {
+                                 retryCounts.put(id, retries);
+                                 System.out.println("LLM answer generation failed for " + id + ". Retrying in 5s... (attempt " + retries + ")");
+-                                retryScheduler.schedule(() -> this.putToQueue(id), 5, TimeUnit.SECONDS);
++                                retryScheduler.schedule(() -> this.addToQueue(id), 5, TimeUnit.SECONDS);
+                             }
+                         }
++                        
+                     } else {
+                         System.out.println("Something went very wrong");
+-                        this.putToQueue(id);
+                     }
+                 } catch (InterruptedException e) {
+                     Thread.currentThread().interrupt();
+@@ -193,6 +235,9 @@ public class ProcessingService {
+                     e.printStackTrace();
+                 }
+             }
++            } finally {
++                isProcessingThreadRunning = false;
++            }
+         });
+ 
+         checkingThread.setDaemon(true); 
+@@ -207,37 +252,15 @@ public class ProcessingService {
+                 attempt = attempt + 1;
+                 String node = (String) llmNodes.toArray()[ThreadLocalRandom.current().nextInt(numberOfNodes)];
+                 try {
+-                    String targetUrl = "http://localhost:" + node + "/llm/decompose";
++                    String targetUrl = formatUrl(node, "/llm/decompose");
++
+                     HttpHeaders headers = new HttpHeaders();
+                     headers.setContentType(MediaType.APPLICATION_JSON);
+                     HttpEntity<LLMRequest> entity = new HttpEntity<>(llmRequest, headers);
+ 
+                     return restTemplate.postForObject(targetUrl, entity, RecipeQuery.class);
+-                } catch (Exception e) {System.out.println("Calling llm service failed.");}
+-            } while (attempt < 5);
+-            return null;
+-        } else {
+-            System.out.println("No llm nodes found");
+-            return null;
+-        }
+-    }
+-
+-    private String sendToLLMAnswerNode(UserRequest userRequest) {
+-        int numberOfNodes = llmNodes.size();
+-        if (numberOfNodes > 0)  {
+-            int attempt = 0;
+-            do {
+-                attempt = attempt + 1;
+-                String node = (String) llmNodes.toArray()[ThreadLocalRandom.current().nextInt(numberOfNodes)];
+-                try {
+-                    String targetUrl = "http://localhost:" + node + "/llm/answer";
+-                    HttpHeaders headers = new HttpHeaders();
+-                    headers.setContentType(MediaType.APPLICATION_JSON);
+-                    HttpEntity<UserRequest> entity = new HttpEntity<>(userRequest, headers);
+-
+-                    return restTemplate.postForObject(targetUrl, entity, String.class);
+                 } catch (Exception e) {
+-                    System.out.println("Calling llm service failed.");
++                    System.out.println("Calling llm service failed: " + e.getMessage());
+                     e.printStackTrace();
+                 }
+             } while (attempt < 5);
+@@ -251,10 +274,10 @@ public class ProcessingService {
+     private List<RecipeQueryResult> sendToDBNode(RecipeQuery recipeQuery) {
+         int numberOfNodes = dbNodes.size();
+         List<RecipeQueryResult> results = new ArrayList<>();
+-        if (numberOfNodes >= 0)  {
++        if (numberOfNodes > 0)  {
+             for (String node : dbNodes) {
+                 try {
+-                    String targetUrl = "http://localhost:" + node + "/recipes/search";
++                    String targetUrl = formatUrl(node, "/recipes/search");
+                     HttpHeaders headers = new HttpHeaders();
+                     headers.setContentType(MediaType.APPLICATION_JSON);
+                     HttpEntity<RecipeQuery> entity = new HttpEntity<>(recipeQuery, headers);
+@@ -267,21 +290,56 @@ public class ProcessingService {
+                     if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                         results.addAll(response.getBody());
+                     }
+-                } catch (Exception e) {System.out.println("Calling recipe node (" + node + ") service failed.");}
++                } catch (Exception e) {
++                    System.out.println("Calling RECIPE NODE service failed: " + node);
++                    e.printStackTrace();
++                }
+             }
+-
+             results.sort((r1, r2) -> {
+                 Double s1 = r1.getScore() != null ? r1.getScore() : 0.0;
+                 Double s2 = r2.getScore() != null ? r2.getScore() : 0.0;
+                 return Double.compare(s2, s1);
+             });
+-
+             if (results.size() > 10) {
+                 return new ArrayList<>(results.subList(0, 10));
+-            } else {return results;}
++            }
++            return results;
+         } else {
+             System.out.println("No recipe nodes found");
+             return null;
+         }
+     }
++
++    private String sendToLLMAnswerNode(UserRequest userRequest) {
++        int numberOfNodes = llmNodes.size();
++        if (numberOfNodes > 0)  {
++            int attempt = 0;
++            do {
++                attempt = attempt + 1;
++                String node = (String) llmNodes.toArray()[ThreadLocalRandom.current().nextInt(numberOfNodes)];
++                try {
++                    String targetUrl = formatUrl(node, "/llm/answer");
++                    HttpHeaders headers = new HttpHeaders();
++                    headers.setContentType(MediaType.APPLICATION_JSON);
++                    HttpEntity<UserRequest> entity = new HttpEntity<>(userRequest, headers);
++
++                    return restTemplate.postForObject(targetUrl, entity, String.class);
++                } catch (Exception e) {
++                    System.out.println("Calling llm service failed.");
++                    e.printStackTrace();
++                }
++            } while (attempt < 5);
++            return null;
++        } else {
++            System.out.println("No llm nodes found");
++            return null;
++        }
++    }
++
++    private String formatUrl(String idOrAddress, String path) {
++        if (idOrAddress.contains(":") || idOrAddress.contains(".") || idOrAddress.equalsIgnoreCase("localhost")) {
++            return "http://" + idOrAddress + path;
++        }
++        return "http://localhost:" + idOrAddress + path;
++    }
+ }
+\ No newline at end of file
+diff --git "a/e:\\PullTest\\coor\\coordinator/src/main/java/com/example/coordinator/service/RequestStorage.java" "b/e:\\DS\\my-spring-project\\coordinator/src/main/java/com/example/coordinator/service/RequestStorage.java"
+index 3bcc174..e758f87 100644
+--- "a/e:\\PullTest\\coor\\coordinator/src/main/java/com/example/coordinator/service/RequestStorage.java"
++++ "b/e:\\DS\\my-spring-project\\coordinator/src/main/java/com/example/coordinator/service/RequestStorage.java"
+@@ -1,21 +1,16 @@
+ package com.example.coordinator.service;
+ 
+-import org.springframework.stereotype.Component;
+-import org.springframework.scheduling.annotation.Scheduled;
+-
+-import org.springframework.web.client.RestTemplate;
++import java.time.LocalDateTime;
++import java.util.List;
++import java.util.Set;
++import java.util.concurrent.ConcurrentHashMap;
+ 
+ import org.springframework.http.HttpEntity;
+ import org.springframework.http.HttpHeaders;
+ import org.springframework.http.MediaType;
+-
+-import java.util.concurrent.ConcurrentHashMap;
+-
+-import java.util.List;
+-import java.util.Set;
+-import java.util.HashSet;
+-
+-import java.time.LocalDateTime;
++import org.springframework.scheduling.annotation.Scheduled;
++import org.springframework.stereotype.Component;
++import org.springframework.web.client.RestTemplate;
+ 
+ import com.example.coordinator.model.UserRequest;
+ 
+@@ -23,12 +18,12 @@ import com.example.coordinator.model.UserRequest;
+ public class RequestStorage {
+ 
+     private final RestTemplate restTemplate;
+-    private final HashSet<String> nodesList;
++    private final Set<String> nodesList;
+     private final ConcurrentHashMap<String, UserRequest> requestStatus;
+ 
+     public RequestStorage(RestTemplate restTemplate) {
+         this.restTemplate = restTemplate;
+-        this.nodesList = new HashSet<>();
++        this.nodesList = ConcurrentHashMap.newKeySet();
+         this.requestStatus = new ConcurrentHashMap<>();
+     }
+ 
+@@ -37,7 +32,7 @@ public class RequestStorage {
+     }
+ 
+     public Set<String> getRequestList() {
+-        return requestStatus.keySet();
++        return new java.util.HashSet<>(requestStatus.keySet());
+     }
+ 
+     public boolean storeRequest(String id, UserRequest request) {
+@@ -51,11 +46,11 @@ public class RequestStorage {
+         requestStatus.remove(id);
+     }
+ 
+-    // leader only method
+     public void broadCastCopy(UserRequest request) { 
++        // only leaders
+         for (String node : nodesList) {
+             try {
+-                String targetUrl = "http://localhost:" + node + "/copy";
++                String targetUrl = node.contains(":") || node.contains(".") || node.equalsIgnoreCase("localhost") ? "http://" + node + "/copy" : "http://localhost:" + node + "/copy";
+                 HttpHeaders headers = new HttpHeaders();
+                 headers.setContentType(MediaType.APPLICATION_JSON);
+                 HttpEntity<UserRequest> entity = new HttpEntity<>(request, headers);
+@@ -70,7 +65,7 @@ public class RequestStorage {
+     }
+ 
+     public void setNode(List<String> list) {
+-        this.nodesList.clear();
++        this.nodesList.retainAll(list);
+         this.nodesList.addAll(list);
+     }
+ 
+@@ -78,6 +73,6 @@ public class RequestStorage {
+     private void cleanUp() {
+         LocalDateTime now = LocalDateTime.now(); 
+         requestStatus.values().removeIf(request -> 
+-            request.getTtl() == null || request.getTtl().isBefore(now));
++            request.getTtl() != null && request.getTtl().isBefore(now));
+     }
+ }
+\ No newline at end of file
+diff --git "a/e:\\DS\\my-spring-project\\coordinator/target/classes/application.properties" "b/e:\\DS\\my-spring-project\\coordinator/target/classes/application.properties"
+new file mode 100644
+index 0000000..4c00e40
+--- /dev/null
++++ "b/e:\\DS\\my-spring-project\\coordinator/target/classes/application.properties"
+@@ -0,0 +1 @@
++server.port=8080
+diff --git "a/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/CoordinatorApplication.class" "b/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/CoordinatorApplication.class"
+new file mode 100644
+index 0000000..0f1fff5
+Binary files /dev/null and "b/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/CoordinatorApplication.class" differ
+diff --git "a/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/config/RestTemplateConfig.class" "b/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/config/RestTemplateConfig.class"
+new file mode 100644
+index 0000000..74073c1
+Binary files /dev/null and "b/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/config/RestTemplateConfig.class" differ
+diff --git "a/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/controller/ClientController.class" "b/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/controller/ClientController.class"
+new file mode 100644
+index 0000000..53cc127
+Binary files /dev/null and "b/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/controller/ClientController.class" differ
+diff --git "a/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/controller/ClusterController.class" "b/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/controller/ClusterController.class"
+new file mode 100644
+index 0000000..e4e6740
+Binary files /dev/null and "b/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/controller/ClusterController.class" differ
+diff --git "a/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/model/NodesInfo.class" "b/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/model/NodesInfo.class"
+new file mode 100644
+index 0000000..c65ed45
+Binary files /dev/null and "b/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/model/NodesInfo.class" differ
+diff --git "a/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/model/UserRequest.class" "b/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/model/UserRequest.class"
+new file mode 100644
+index 0000000..7355a52
+Binary files /dev/null and "b/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/model/UserRequest.class" differ
+diff --git "a/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/model/VoteRequest.class" "b/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/model/VoteRequest.class"
+new file mode 100644
+index 0000000..5a79a76
+Binary files /dev/null and "b/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/model/VoteRequest.class" differ
+diff --git "a/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/service/ConsensusService.class" "b/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/service/ConsensusService.class"
+new file mode 100644
+index 0000000..8190536
+Binary files /dev/null and "b/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/service/ConsensusService.class" differ
+diff --git "a/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/service/CoordinatorService.class" "b/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/service/CoordinatorService.class"
+new file mode 100644
+index 0000000..c2fab98
+Binary files /dev/null and "b/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/service/CoordinatorService.class" differ
+diff --git "a/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/service/ProcessingService$1.class" "b/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/service/ProcessingService$1.class"
+new file mode 100644
+index 0000000..651b360
+Binary files /dev/null and "b/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/service/ProcessingService$1.class" differ
+diff --git "a/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/service/ProcessingService.class" "b/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/service/ProcessingService.class"
+new file mode 100644
+index 0000000..502b58a
+Binary files /dev/null and "b/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/service/ProcessingService.class" differ
+diff --git "a/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/service/RequestStorage.class" "b/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/service/RequestStorage.class"
+new file mode 100644
+index 0000000..ed9b649
+Binary files /dev/null and "b/e:\\DS\\my-spring-project\\coordinator/target/classes/com/example/coordinator/service/RequestStorage.class" differ
+diff --git "a/e:\\DS\\my-spring-project\\coordinator/target/coordinator-1.0.0.jar" "b/e:\\DS\\my-spring-project\\coordinator/target/coordinator-1.0.0.jar"
+new file mode 100644
+index 0000000..d660cdb
+Binary files /dev/null and "b/e:\\DS\\my-spring-project\\coordinator/target/coordinator-1.0.0.jar" differ
+diff --git "a/e:\\DS\\my-spring-project\\coordinator/target/coordinator-1.0.0.jar.original" "b/e:\\DS\\my-spring-project\\coordinator/target/coordinator-1.0.0.jar.original"
+new file mode 100644
+index 0000000..d167f18
+Binary files /dev/null and "b/e:\\DS\\my-spring-project\\coordinator/target/coordinator-1.0.0.jar.original" differ
+diff --git "a/e:\\DS\\my-spring-project\\coordinator/target/maven-archiver/pom.properties" "b/e:\\DS\\my-spring-project\\coordinator/target/maven-archiver/pom.properties"
+new file mode 100644
+index 0000000..3ffa56c
+--- /dev/null
++++ "b/e:\\DS\\my-spring-project\\coordinator/target/maven-archiver/pom.properties"
+@@ -0,0 +1,3 @@
++artifactId=coordinator
++groupId=com.example
++version=1.0.0
+diff --git "a/e:\\DS\\my-spring-project\\coordinator/target/maven-status/maven-compiler-plugin/compile/default-compile/createdFiles.lst" "b/e:\\DS\\my-spring-project\\coordinator/target/maven-status/maven-compiler-plugin/compile/default-compile/createdFiles.lst"
+new file mode 100644
+index 0000000..1c02375
+--- /dev/null
++++ "b/e:\\DS\\my-spring-project\\coordinator/target/maven-status/maven-compiler-plugin/compile/default-compile/createdFiles.lst"
+@@ -0,0 +1,12 @@
++com\example\coordinator\service\ProcessingService.class
++com\example\coordinator\model\VoteRequest.class
++com\example\coordinator\service\RequestStorage.class
++com\example\coordinator\model\UserRequest.class
++com\example\coordinator\controller\ClientController.class
++com\example\coordinator\service\ProcessingService$1.class
++com\example\coordinator\controller\ClusterController.class
++com\example\coordinator\service\CoordinatorService.class
++com\example\coordinator\CoordinatorApplication.class
++com\example\coordinator\config\RestTemplateConfig.class
++com\example\coordinator\model\NodesInfo.class
++com\example\coordinator\service\ConsensusService.class
+diff --git "a/e:\\DS\\my-spring-project\\coordinator/target/maven-status/maven-compiler-plugin/compile/default-compile/inputFiles.lst" "b/e:\\DS\\my-spring-project\\coordinator/target/maven-status/maven-compiler-plugin/compile/default-compile/inputFiles.lst"
+new file mode 100644
+index 0000000..96b34e2
+--- /dev/null
++++ "b/e:\\DS\\my-spring-project\\coordinator/target/maven-status/maven-compiler-plugin/compile/default-compile/inputFiles.lst"
+@@ -0,0 +1,11 @@
++E:\DS\my-spring-project\coordinator\src\main\java\com\example\coordinator\CoordinatorApplication.java
++E:\DS\my-spring-project\coordinator\src\main\java\com\example\coordinator\model\NodesInfo.java
++E:\DS\my-spring-project\coordinator\src\main\java\com\example\coordinator\model\VoteRequest.java
++E:\DS\my-spring-project\coordinator\src\main\java\com\example\coordinator\config\RestTemplateConfig.java
++E:\DS\my-spring-project\coordinator\src\main\java\com\example\coordinator\model\UserRequest.java
++E:\DS\my-spring-project\coordinator\src\main\java\com\example\coordinator\service\RequestStorage.java
++E:\DS\my-spring-project\coordinator\src\main\java\com\example\coordinator\controller\ClientController.java
++E:\DS\my-spring-project\coordinator\src\main\java\com\example\coordinator\controller\ClusterController.java
++E:\DS\my-spring-project\coordinator\src\main\java\com\example\coordinator\service\CoordinatorService.java
++E:\DS\my-spring-project\coordinator\src\main\java\com\example\coordinator\service\ConsensusService.java
++E:\DS\my-spring-project\coordinator\src\main\java\com\example\coordinator\service\ProcessingService.java

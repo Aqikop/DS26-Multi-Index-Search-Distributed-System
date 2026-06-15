@@ -17,12 +17,14 @@ public class CoordinatorService {
     private final RestTemplate restTemplate;
     private final ProcessingService processingService;
     private final RequestStorage storage;
+    private final ConsensusService consensus;
     
     public CoordinatorService(RestTemplate restTemplate, 
-            RequestStorage storage, ProcessingService processingService) {
+            RequestStorage storage, ProcessingService processingService, ConsensusService consensus) {
         this.restTemplate = restTemplate;
         this.processingService = processingService;
         this.storage = storage;
+        this.consensus = consensus;
     }
 
     public String search(LLMRequest request) { 
@@ -44,7 +46,7 @@ public class CoordinatorService {
 
             return id;
         } else {
-            return "Rejected, not leading.";
+            return consensus.redirect(request);
         }
     }
 
