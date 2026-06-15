@@ -3,5 +3,9 @@ langchain-google-genai
 langchain-core
 qdrant-client
 fastapi[standard]
-pydantic
 uvicorn
+ijson 
+torch 
+sentence-transformers
+pydantic
+python-multipart
