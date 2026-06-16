@@ -38,7 +38,17 @@ public class DishController {
 
     @GetMapping
     public List<Dish> dishes() {
-        return readDishes().dishes;
+        java.util.Map<String, RecipeRecord> map = readDishes();
+        List<Dish> list = new ArrayList<>();
+        for (java.util.Map.Entry<String, RecipeRecord> entry : map.entrySet()) {
+            Dish dish = new Dish();
+            dish.id = entry.getKey();
+            dish.name = entry.getValue().title;
+            dish.ingredients = entry.getValue().ingredients;
+            dish.cookingMethod = entry.getValue().instructions;
+            list.add(dish);
+        }
+        return list;
     }
 
     @PostMapping
@@ -59,7 +69,7 @@ public class DishController {
         }
 
         synchronized (lock) {
-            DishesData data = readDishes();
+            java.util.Map<String, RecipeRecord> data = readDishes();
 
             Dish dish = new Dish();
             dish.id = UUID.randomUUID().toString();
@@ -67,7 +77,13 @@ public class DishController {
             dish.ingredients = safeList(request.ingredients);
             dish.cookingMethod = clean(request.cookingMethod);
 
-            data.dishes.add(dish);
+            RecipeRecord record = new RecipeRecord();
+            record.title = dish.name;
+            record.ingredients = dish.ingredients;
+            record.instructions = dish.cookingMethod;
+            record.picture_link = null;
+
+            data.put(dish.id, record);
             writeDishes(data);
 
             // Send to ETL Node
@@ -83,6 +99,13 @@ public class DishController {
                 com.example.shared.model.ETLQueryResult result = restTemplate.postForObject(etlNodeUrl + "/etl/process", etlQuery, com.example.shared.model.ETLQueryResult.class);
                 // TODO: Redirect result to recipe node for Qdrant upload
                 System.out.println("Received ETL result with " + (result != null && result.getChunks() != null ? result.getChunks().size() : 0) + " chunks.");
+                
+                // Pretty print the result so you can verify the metadata
+                if (result != null && result.getChunks() != null) {
+                    System.out.println("--- ENRICHED METADATA START ---");
+                    System.out.println(objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(result.getChunks()));
+                    System.out.println("--- ENRICHED METADATA END ---");
+                }
             } catch (Exception e) {
                 System.err.println("Failed to process dish via ETL node: " + e.getMessage());
             }
@@ -99,30 +122,30 @@ public class DishController {
 
             try {
                 Files.createDirectories(dishesFile.getParent());
-                writeDishes(new DishesData());
+                writeDishes(new java.util.HashMap<>());
             } catch (IOException e) {
                 throw new IllegalStateException("Could not create dishes file.", e);
             }
         }
     }
 
-    private DishesData readDishes() {
+    private java.util.Map<String, RecipeRecord> readDishes() {
         ensureDishesFile();
 
         synchronized (lock) {
             try {
-                DishesData data = objectMapper.readValue(dishesFile.toFile(), DishesData.class);
-                if (data.dishes == null) {
-                    data.dishes = new ArrayList<>();
+                String content = Files.readString(dishesFile);
+                if (content.trim().isEmpty()) {
+                    return new java.util.HashMap<>();
                 }
-                return data;
+                return objectMapper.readValue(content, new com.fasterxml.jackson.core.type.TypeReference<java.util.Map<String, RecipeRecord>>() {});
             } catch (IOException e) {
                 throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Could not read dishes file.");
             }
         }
     }
 
-    private void writeDishes(DishesData data) {
+    private void writeDishes(java.util.Map<String, RecipeRecord> data) {
         synchronized (lock) {
             try {
                 objectMapper.writeValue(dishesFile.toFile(), data);
@@ -147,8 +170,11 @@ public class DishController {
                 .toList();
     }
 
-    public static class DishesData {
-        public List<Dish> dishes = new ArrayList<>();
+    public static class RecipeRecord {
+        public String title;
+        public List<String> ingredients = new ArrayList<>();
+        public String instructions;
+        public String picture_link;
     }
 
     public static class Dish {

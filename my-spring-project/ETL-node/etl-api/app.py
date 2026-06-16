@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional
+from dotenv import load_dotenv
 
 from qdrant_client import QdrantClient
 from enrich_recipes import to_rag_chunk
@@ -18,23 +19,31 @@ ETL_PATH = Path(os.getenv("ETL_NODE_PATH", DEFAULT_PATH)).resolve()
 
 app = FastAPI(title="Recipe Ingest API")
 
+load_dotenv()
+
 qdrant_api_key = os.getenv("QDRANT_API_KEY", "")
 qdrant_client = QdrantClient(
     url="https://cf19a9b2-fef9-49a9-96b2-003c18348045.eu-central-1-0.aws.cloud.qdrant.io:6333",
     api_key=qdrant_api_key,
 )
 
-# ── lazy-load ingest so the heavy models only init once ───────────────────────
-_ingest_fn = None
-
-def _get_ingest():
-    """Load ingest() from upload_recipes.py on first call, cache thereafter."""
-    global _ingest_fn
-    if _ingest_fn is None:
-        from upload_recipes import ingest
-        _ingest_fn = ingest
-    return _ingest_fn
-
+# Ensure the food_name index exists on startup
+from qdrant_client.http import models
+try:
+    print("Ensuring text index on 'food_name' in 'nutrition' collection...")
+    qdrant_client.create_payload_index(
+        collection_name="nutrition",
+        field_name="food_name",
+        field_schema=models.TextIndexParams(
+            type="text",
+            tokenizer=models.TokenizerType.WORD,
+            min_token_len=2,
+            max_token_len=15,
+            lowercase=True,
+        )
+    )
+except Exception as e:
+    pass # Usually throws an error if it already exists, which is fine
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SCHEMA
@@ -108,101 +117,6 @@ def process_dishes(payload: DishesPayload):
 
     return chunks
 
+# uvicorn app:app --port 6000 --reload
 
-# @app.post("/ingest/json", status_code=202)
-# def ingest_from_body(payload: DishesPayload, background_tasks: BackgroundTasks):
-#     """
-#     Accept dishes as a JSON body and ingest them into Qdrant.
-
-#     Example body (matches dishes.json structure):
-#     {
-#         "dishes": [
-#             {
-#                 "id": "25b6ef16-...",
-#                 "name": "Egg Fried Rice",
-#                 "ingredients": ["Rice", "Egg", "Soy sauce"],
-#                 "cookingMethod": "Fry rice with egg and soy sauce"
-#             }
-#         ]
-#     }
-#     """
-#     if not payload.dishes:
-#         raise HTTPException(status_code=400, detail="dishes list is empty")
-
-#     recipe_dict = _dishes_to_recipe_json(payload.dishes)
-
-#     # Write to a temp file so ingest() can stream it
-#     tmp = tempfile.NamedTemporaryFile(
-#         mode="w", suffix=".json", delete=False, encoding="utf-8"
-#     )
-#     json.dump(recipe_dict, tmp, ensure_ascii=False)
-#     tmp.close()
-
-#     def _run(path: str):
-#         try:
-#             _get_ingest()(path)
-#         finally:
-#             os.unlink(path)
-
-#     background_tasks.add_task(_run, tmp.name)
-
-#     return {
-#         "status":  "accepted",
-#         "queued":  len(payload.dishes),
-#         "ids":     list(recipe_dict.keys()),
-#         "message": "Recipes are being processed and uploaded to Qdrant.",
-#     }
-
-
-# @app.post("/ingest/file", status_code=202)
-# async def ingest_from_file(
-#     background_tasks: BackgroundTasks,
-#     file: UploadFile = File(...),
-# ):
-#     """
-#     Accept a dishes.json file upload and ingest it into Qdrant.
-
-#     The file must be a JSON file matching the dishes.json structure:
-#     { "dishes": [ { "id", "name", "ingredients", "cookingMethod" }, ... ] }
-#     """
-#     if not file.filename.endswith(".json"):
-#         raise HTTPException(status_code=400, detail="Only .json files are accepted")
-
-#     raw = await file.read()
-#     try:
-#         body = json.loads(raw)
-#     except json.JSONDecodeError as e:
-#         raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
-
-#     # Validate via pydantic
-#     try:
-#         payload = DishesPayload(**body)
-#     except Exception as e:
-#         raise HTTPException(status_code=422, detail=str(e))
-
-#     if not payload.dishes:
-#         raise HTTPException(status_code=400, detail="dishes list is empty")
-
-#     recipe_dict = _dishes_to_recipe_json(payload.dishes)
-
-#     tmp = tempfile.NamedTemporaryFile(
-#         mode="w", suffix=".json", delete=False, encoding="utf-8"
-#     )
-#     json.dump(recipe_dict, tmp, ensure_ascii=False)
-#     tmp.close()
-
-#     def _run(path: str):
-#         try:
-#             _get_ingest()(path)
-#         finally:
-#             os.unlink(path)
-
-#     background_tasks.add_task(_run, tmp.name)
-
-#     return {
-#         "status":   "accepted",
-#         "filename": file.filename,
-#         "queued":   len(payload.dishes),
-#         "ids":      list(recipe_dict.keys()),
-#         "message":  "Recipes are being processed and uploaded to Qdrant.",
-#     }
+# Invoke-RestMethod -Uri "http://localhost:8080/api/dishes" -Method Post -ContentType "application/json" -Body '{"name": "Spaghetti Bolognese", "ingredients": ["1 pound ground beef", "2 cups tomato sauce", "2 cloves garlic", "1 medium onion"], "cookingMethod": "Boil spaghetti until al dente. In a pan, cook ground beef with garlic and onion, then add tomato sauce. Mix with pasta."}'

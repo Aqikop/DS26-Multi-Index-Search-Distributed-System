@@ -243,11 +243,12 @@ def _lookup_nutrition(
     try:
         results: list[ScoredPoint] = qdrant_client.query_points(
             collection_name=collection,
-            query_text=query,          # requires FastEmbed on the Qdrant server side
+            query=query,          # requires FastEmbed on the Qdrant server side
             limit=1,
             score_threshold=score_threshold,
         ).points
-    except Exception:
+    except Exception as e:
+        print(f"Error querying Qdrant points for '{query}': {e}")
         # Fallback: scroll + filter by food_name keyword (no vector needed)
         try:
             results, _ = qdrant_client.scroll(
@@ -258,7 +259,8 @@ def _lookup_nutrition(
                 limit=1,
                 with_payload=True,
             )
-        except Exception:
+        except Exception as e2:
+            print(f"Error scrolling Qdrant for '{query}': {e2}")
             return None
 
     if not results:
