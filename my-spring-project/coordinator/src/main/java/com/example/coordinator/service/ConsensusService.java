@@ -29,13 +29,14 @@ public class ConsensusService {
 
     private final Set<String> nodesList = ConcurrentHashMap.newKeySet();
     @Value("${node.id:${server.port:8080}}")
-    private String nodeId; // do I need to sync???
-    private final AtomicBoolean voted = new AtomicBoolean(false);
+    private String nodeId;
     
-    public volatile String nodeStatus; // do I need to sync???
-    public volatile String leaderId; // do I need to sync???
-    public volatile boolean leaderAlive;
-    public AtomicInteger term;
+    private volatile String nodeStatus; 
+    private volatile String leaderId; 
+
+    private final AtomicInteger term;
+    private final AtomicBoolean voted;
+    private final AtomicBoolean leaderAlive;
 
     public ConsensusService(RestTemplate restTemplate, 
             ProcessingService processingService, RequestStorage storage) {
@@ -43,15 +44,16 @@ public class ConsensusService {
         this.processingService = processingService;
         this.storage = storage;
 
-        this.voted.set(false);
         this.nodeStatus = "follower";
         this.leaderId = null;
+        
         this.term = new AtomicInteger(0);
-        this.leaderAlive = false;
+        this.voted = new AtomicBoolean(false);
+        this.leaderAlive = new AtomicBoolean(false);
         }
 
     /**
-     * Handles incoming Raft vote requests from candidates.
+     * Handles incoming vote requests from candidates.
      * Grants vote if the candidate's term is greater or equal and it has sufficient requests.
      */
     public boolean vote(VoteRequest request) { 
@@ -65,9 +67,6 @@ public class ConsensusService {
             int candidateRequestCount = request.getRequestCount();
             
             if (candidateRequestCount >= requestCount && this.voted.compareAndSet(false, true)) {
-                this.nodeStatus = "follower";
-                this.leaderAlive = true;
-                processingService.setIsLeader(false);
                 return true;
                 } 
             }
@@ -79,14 +78,12 @@ public class ConsensusService {
      * Resets the election timeout and updates the current term.
      */
     public boolean ping(String id, int term) {
-        // if (term >= this.term) {
         if (term >= this.term.get()) {
             this.leaderId = id;
-            this.leaderAlive = true;
+            this.leaderAlive.set(true);
             this.nodeStatus = "follower";
             processingService.setIsLeader(false);
             this.term.set(term);
-
             return true;
         } else {return false;}
     }
@@ -102,7 +99,6 @@ public class ConsensusService {
                 String targetUrl = formatUrl(id, "/ping");
                 String urlTemplate = UriComponentsBuilder.fromHttpUrl(targetUrl)
                         .queryParam("id", nodeId)
-                        // .queryParam("term", this.term)
                         .queryParam("term", this.term.get())
                         .encode()
                         .toUriString();
@@ -126,7 +122,6 @@ public class ConsensusService {
                 }
 
                 List<String> coordinators = new ArrayList<>(nodesList);
-
                 coordinators.add(nodeId);
                 coordinators.remove(id);
 
@@ -179,7 +174,7 @@ public class ConsensusService {
 
     public boolean apply(String id, String type) {
         if (nodeStatus.equals("leader")) {
-            // try service first??
+            // Later: try service first, to prevent fraud
             processingService.apply(id, type);
             for (String node : nodesList) {
                 try {
@@ -189,7 +184,6 @@ public class ConsensusService {
                         .queryParam("type", type)
                         .encode()
                         .toUriString();
-                // return restTemplate.postForObject(urlTemplate, null, Boolean.class);
                 restTemplate.postForObject(urlTemplate, null, Boolean.class);
                 } catch (RestClientException e) { System.out.println("Broadcasting new worker nodes failed.");}
             }
@@ -213,7 +207,7 @@ public class ConsensusService {
                 System.out.println("Redirecting fails: " + e.getMessage());
             }
         }
-        return "Rejected, not leading and redirect failed.";
+        return null;
     }
 
     /**
@@ -228,7 +222,6 @@ public class ConsensusService {
                     String targetUrl = formatUrl(node, "/ping");
                     String urlTemplate = UriComponentsBuilder.fromHttpUrl(targetUrl)
                             .queryParam("id", nodeId)
-                            // .queryParam("term", this.term)
                             .queryParam("term", this.term.get())
                             .encode()
                             .toUriString();
@@ -238,6 +231,7 @@ public class ConsensusService {
                         nodeStatus = "follower"; 
                         processingService.setIsLeader(false);
                         }
+                    // Later: only step down if less than 1/2 success ping.
                 } catch (Exception e) {System.out.println("Broadcast failed.");}
             }
             System.out.println("Pinging other nodes.");
@@ -250,12 +244,12 @@ public class ConsensusService {
      */
     @Scheduled(fixedDelay = 5000)
     public void scheduledTask() {
-        // System.out.println("Current Status: " + this.nodeStatus + " " + this.term);
         System.out.println("Current Status: " + this.nodeStatus + " " + this.term.get());
+
         if (this.nodeStatus.equals("follower")) {
-            if (this.leaderAlive) {this.leaderAlive = false;}
-            else {
+            if (!this.leaderAlive.compareAndSet(true, false)) {
                 this.nodeStatus = "candidate";
+                this.leaderId = null;
                 processingService.setIsLeader(false);
                 new Thread(this::runElection).start();
             }
@@ -269,51 +263,45 @@ public class ConsensusService {
     private void runElection() {
         while (this.nodeStatus.equals("candidate")) {
             try {
-                        long randomDelay = ThreadLocalRandom.current().nextLong(1000, 2000 + 1);
-                        Thread.sleep(randomDelay);
-                    } catch (InterruptedException ignore) {}
+                long randomDelay = ThreadLocalRandom.current().nextLong(1000, 2000 + 1);
+                Thread.sleep(randomDelay);
+            } catch (InterruptedException ignore) {}
 
-                    if (!this.nodeStatus.equals("candidate")) return;
+            if (!this.nodeStatus.equals("candidate")) return;
 
-                    // this.term = term + 1;
-                    this.term.incrementAndGet();
-                    this.voted.set(false);
-                    int vote = 1;
+            this.term.incrementAndGet();
+            this.voted.set(false);
+            int vote = 1;
 
-                    VoteRequest request = new VoteRequest();
-                    request.setRequestCount(storage.getRequestList().size());
-                    request.setCandidateId(this.nodeId);
+            VoteRequest request = new VoteRequest();
+            request.setRequestCount(storage.getRequestList().size());
+            request.setCandidateId(this.nodeId);
+            request.setTerm(this.term.get());
 
-                    // request.setRequestCount(4);
+            System.out.println("Start election " + this.term.get());
 
-                    // request.setTerm(this.term);
-                    request.setTerm(this.term.get());
+            // check status again maybe??
+            for (String node : nodesList) {
+                try {
+                    String targetUrl = formatUrl(node, "/vote");
+                    HttpHeaders headers = new HttpHeaders();
+                    headers.setContentType(MediaType.APPLICATION_JSON);
+                    HttpEntity<VoteRequest> entity = new HttpEntity<>(request, headers);
+                    Boolean result = restTemplate.postForObject(targetUrl, entity, Boolean.class);
+                    if (Boolean.TRUE.equals(result)) {vote = vote + 1;}
+                } catch (RestClientException e) { System.out.println("Ask for vote failed.");}
+            }
 
-                    // System.out.println("Start election " + this.term);
-                    System.out.println("Start election " + this.term.get());
-
-                    // check status again maybe??
-                    for (String node : nodesList) {
-                        try {
-                            String targetUrl = formatUrl(node, "/vote");
-                            HttpHeaders headers = new HttpHeaders();
-                            headers.setContentType(MediaType.APPLICATION_JSON);
-                            HttpEntity<VoteRequest> entity = new HttpEntity<>(request, headers);
-                            Boolean result = restTemplate.postForObject(targetUrl, entity, Boolean.class);
-                            // if (result) {vote = vote + 1;}
-                            if (Boolean.TRUE.equals(result)) {vote = vote + 1;}
-                        } catch (RestClientException e) { System.out.println("Ask for vote failed.");}
-                    }
-
-                    if (vote > ((nodesList.size() + 1) / 2) && this.nodeStatus.equals("candidate")) {
-                        this.nodeStatus = "leader";
-                        processingService.setIsLeader(true);
-                        processingService.processingThread(); 
-                        processingService.updateQueue();
-                        System.out.println("Won");
-                    }
-                    else {System.out.println("Lost");}
-                }
+            if (vote > ((nodesList.size() + 1) / 2) && this.nodeStatus.equals("candidate")) {
+                this.nodeStatus = "leader";
+                this.leaderId = null;
+                processingService.setIsLeader(true);
+                processingService.processingThread(); 
+                processingService.updateQueue();
+                System.out.println("Won");
+            }
+            else {System.out.println("Lost");}
+        }
     }
 
     private String formatUrl(String idOrAddress, String path) {
