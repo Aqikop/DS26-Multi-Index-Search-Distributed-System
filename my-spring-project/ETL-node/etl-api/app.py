@@ -1,0 +1,122 @@
+from pathlib import Path
+import importlib.util
+import json
+import os
+import tempfile
+import uuid
+
+from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+from typing import Optional
+from dotenv import load_dotenv
+
+from qdrant_client import QdrantClient
+from enrich_recipes import to_rag_chunk
+
+DEFAULT_PATH = Path(__file__).resolve().parent / "enrich_recipe.py"
+ETL_PATH = Path(os.getenv("ETL_NODE_PATH", DEFAULT_PATH)).resolve()
+
+app = FastAPI(title="Recipe Ingest API")
+
+load_dotenv()
+
+qdrant_api_key = os.getenv("QDRANT_API_KEY", "")
+qdrant_client = QdrantClient(
+    url="https://cf19a9b2-fef9-49a9-96b2-003c18348045.eu-central-1-0.aws.cloud.qdrant.io:6333",
+    api_key=qdrant_api_key,
+)
+
+# Ensure the food_name index exists on startup
+from qdrant_client.http import models
+try:
+    print("Ensuring text index on 'food_name' in 'nutrition' collection...")
+    qdrant_client.create_payload_index(
+        collection_name="nutrition",
+        field_name="food_name",
+        field_schema=models.TextIndexParams(
+            type="text",
+            tokenizer=models.TokenizerType.WORD,
+            min_token_len=2,
+            max_token_len=15,
+            lowercase=True,
+        )
+    )
+except Exception as e:
+    pass # Usually throws an error if it already exists, which is fine
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SCHEMA
+# ══════════════════════════════════════════════════════════════════════════════
+
+class Dish(BaseModel):
+    id:            Optional[str]       = None
+    name:          str                          # maps to → title
+    ingredients:   list[str]
+    cookingMethod: Optional[str] = None         # maps to → instructions
+
+class DishesPayload(BaseModel):
+    dishes: list[Dish]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# HELPERS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _dishes_to_recipe_json(dishes: list[Dish]) -> dict:
+    """
+    Convert the dishes.json schema into the {uuid: recipe} format
+    that ingest_recipes.ingest() expects.
+
+    dishes.json field   →   ingest_recipes field
+    -----------------       --------------------
+    name                →   title
+    ingredients         →   ingredients  (list[str])
+    cookingMethod       →   instructions
+    id                  →   used as the recipe key (uuid4 if absent)
+    """
+    return {
+        (dish.id or str(uuid.uuid4())): {
+            "title":        dish.name,
+            "ingredients":  dish.ingredients,
+            "instructions": dish.cookingMethod or "",
+            "picture_link": None,
+        }
+        for dish in dishes
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ENDPOINTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+@app.post("/process")
+def process_dishes(payload: DishesPayload):
+    """
+    Process new dishes and return enriched RAG chunks.
+    """
+    if not payload.dishes:
+        raise HTTPException(status_code=400, detail="dishes list is empty")
+
+    recipe_dict = _dishes_to_recipe_json(payload.dishes)
+
+    chunks = []
+    for key, rec in recipe_dict.items():
+        chunk = to_rag_chunk(
+            key,
+            rec,
+            qdrant_client=qdrant_client,
+            nutrition_collection="nutrition"
+        )
+        chunks.append(chunk)
+
+    return chunks
+
+# uvicorn app:app --port 6000 --reload
+
+# Invoke-RestMethod -Uri "http://localhost:8080/api/dishes" -Method Post -ContentType "application/json" -Body '{"name": "Spaghetti Bolognese", "ingredients": ["1 pound ground beef", "2 cups tomato sauce", "2 cloves garlic", "1 medium onion"], "cookingMethod": "Boil spaghetti until al dente. In a pan, cook ground beef with garlic and onion, then add tomato sauce. Mix with pasta."}'
