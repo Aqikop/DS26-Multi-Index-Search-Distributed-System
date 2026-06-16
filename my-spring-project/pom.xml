@@ -21,6 +21,7 @@
         <module>recipe-node</module>
         <module>llm-node</module>
         <module>coordinator</module>
+        <module>ETL-node</module>
     </modules>
 
     <properties>

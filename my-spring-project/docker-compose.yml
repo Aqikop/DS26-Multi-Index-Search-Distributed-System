@@ -93,6 +93,40 @@ services:
     depends_on:
       - python-llm-api
 
+  python-etl-api:
+    build:
+      context: ./ETL-node/etl-api
+    ports:
+      - "6000:6000"
+    environment:
+      - QDRANT_HOST=cf19a9b2-fef9-49a9-96b2-003c18348045.eu-central-1-0.aws.cloud.qdrant.io
+      - QDRANT_GRPC_PORT=6334
+      - QDRANT_API_KEY=${QDRANT_API_KEY}
+
+  etl-node-1:
+    build:
+      context: .
+      dockerfile: ETL-node/Dockerfile
+    ports:
+      - "8140:8140"
+    environment:
+      - SERVER_PORT=8140
+      - PYTHON_ETL_API_BASE_URL=http://python-etl-api:6000
+    depends_on:
+      - python-etl-api
+
+  etl-node-2:
+    build:
+      context: .
+      dockerfile: ETL-node/Dockerfile
+    ports:
+      - "8141:8141"
+    environment:
+      - SERVER_PORT=8141
+      - PYTHON_ETL_API_BASE_URL=http://python-etl-api:6000
+    depends_on:
+      - python-etl-api
+
   coordinator-1:
     build:
       context: .
@@ -108,6 +142,8 @@ services:
       - recipe-node-3
       - llm-node-1
       - llm-node-2
+      - etl-node-1
+      - etl-node-2
 
   coordinator-2:
     build:
@@ -124,6 +160,8 @@ services:
       - recipe-node-3
       - llm-node-1
       - llm-node-2
+      - etl-node-1
+      - etl-node-2
 
   coordinator-3:
     build:
@@ -140,6 +178,8 @@ services:
       - recipe-node-3
       - llm-node-1
       - llm-node-2
+      - etl-node-1
+      - etl-node-2
 
 volumes:
   qdrant_data:
