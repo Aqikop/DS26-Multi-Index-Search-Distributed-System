@@ -14,6 +14,10 @@ public class UserRequest {
     private RecipeQuery recipeQuery;
     private List<RecipeQueryResult> recipeQueryResults;
     private String result;
+    // ---- add ETL-node ---
+    private String type;
+    private com.example.shared.model.ETLQuery.Dish ingestDish;
+    // --- add ETL-node ----
 
     public UserRequest() {}
 
@@ -37,4 +41,12 @@ public class UserRequest {
 
     public String getResult() { return result; }
     public void setResult(String result) { this.result = result; }
+
+    // ---- add ETL-node ---
+    public String getType() { return type; }
+    public void setType(String type) { this.type = type; }
+
+    public com.example.shared.model.ETLQuery.Dish getIngestDish() { return ingestDish; }
+    public void setIngestDish(com.example.shared.model.ETLQuery.Dish ingestDish) { this.ingestDish = ingestDish; }
+    // --- add ETL-node ----
 }

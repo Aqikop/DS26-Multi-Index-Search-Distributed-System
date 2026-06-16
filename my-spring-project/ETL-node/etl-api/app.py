@@ -14,6 +14,13 @@ from dotenv import load_dotenv
 from qdrant_client import QdrantClient
 from enrich_recipes import to_rag_chunk
 
+import torch
+from sentence_transformers import SentenceTransformer
+
+device = "cuda" if torch.cuda.is_available() else "cpu"
+print(f"Loading SentenceTransformer on {device}...")
+model = SentenceTransformer("all-MiniLM-L6-v2", device=device)
+
 DEFAULT_PATH = Path(__file__).resolve().parent / "enrich_recipe.py"
 ETL_PATH = Path(os.getenv("ETL_NODE_PATH", DEFAULT_PATH)).resolve()
 
@@ -113,6 +120,30 @@ def process_dishes(payload: DishesPayload):
             qdrant_client=qdrant_client,
             nutrition_collection="nutrition"
         )
+        # Generate vector using the local model
+        vector = model.encode(chunk["text"], show_progress_bar=False).tolist()
+        chunk["vector"] = vector
+        
+        # Flatten metadata for Qdrant dot-notation indexing
+        meta = chunk["metadata"]
+        nt = meta.get("nutrition_total") or {}
+        parsed = meta.get("parsed_ingredients", [])
+        flattened_meta = {
+            **{k: v for k, v in meta.items() if k not in ("parsed_ingredients", "nutrition_total", "text")},
+            "ingredients_list":          [p.get("name")         for p in parsed if isinstance(p, dict)],
+            "quantities_list":           [p.get("quantity")     for p in parsed if isinstance(p, dict)],
+            "units_list":                [p.get("unit")         for p in parsed if isinstance(p, dict)],
+            "qty_per_100g_list":         [p.get("qty_per_100g") for p in parsed if isinstance(p, dict)],
+            "nutrition_total.calories":  nt.get("calories")  if isinstance(nt, dict) else None,
+            "nutrition_total.protein":   nt.get("protein")   if isinstance(nt, dict) else None,
+            "nutrition_total.fat":       nt.get("fat")       if isinstance(nt, dict) else None,
+            "nutrition_total.carbs":     nt.get("carbs")     if isinstance(nt, dict) else None,
+            "nutrition_total.fiber":     nt.get("fiber")     if isinstance(nt, dict) else None,
+            "nutrition_total.sugar":     nt.get("sugar")     if isinstance(nt, dict) else None,
+            "nutrition_total.sodium_mg": nt.get("sodium_mg") if isinstance(nt, dict) else None,
+        }
+        chunk["metadata"] = flattened_meta
+        
         chunks.append(chunk)
 
     return chunks

@@ -37,6 +37,9 @@ public class ProcessingService {
 
     private final Set<String> llmNodes = ConcurrentHashMap.newKeySet();
     private final Set<String> dbNodes = ConcurrentHashMap.newKeySet();
+    // ---- add ETL-node ---
+    private final Set<String> etlNodes = ConcurrentHashMap.newKeySet();
+    // --- add ETL-node ----
 
     private final LinkedBlockingQueue<String> requestQueue;
     private final ScheduledExecutorService retryScheduler = Executors.newScheduledThreadPool(1);
@@ -82,11 +85,27 @@ public class ProcessingService {
         this.dbNodes.addAll(list);
     }
 
+    // ---- add ETL-node ---
+    public List<String> getEtlNodes() {
+        return new ArrayList<>(etlNodes);
+    }
+
+    public void setEtlNodes(List<String> list) {
+        if (list == null) return;
+        this.etlNodes.retainAll(list);
+        this.etlNodes.addAll(list);
+    }
+    // --- add ETL-node ----
+
     public boolean apply(String id, String type) {
         if (type.equals("llm")) {
             llmNodes.add(id);
         } else if (type.equals("db")) {
             dbNodes.add(id);
+        // ---- add ETL-node ---
+        } else if (type.equals("etl")) {
+            etlNodes.add(id);
+        // --- add ETL-node ----
         }
         return true;
     }
@@ -125,6 +144,13 @@ public class ProcessingService {
                     }
 
                     if (request.getState().equals("received")) {
+                        // ---- add ETL-node ---
+                        if ("INGEST".equals(request.getType())) {
+                            processIngestJob(id, request);
+                            continue;
+                        }
+                        // --- add ETL-node ----
+
                         LLMRequest llmRequest = new LLMRequest();
                         llmRequest.setUserQuery(request.getUserQuery());
                         RecipeQuery result = sendToLLMNode(llmRequest);
@@ -243,6 +269,76 @@ public class ProcessingService {
         checkingThread.setDaemon(true); 
         checkingThread.start();
     }
+
+    // ---- add ETL-node ---
+    private void processIngestJob(String id, UserRequest request) {
+        if ("received".equals(request.getState())) {
+            try {
+                com.example.shared.model.ETLQuery.Dish sharedDish = request.getIngestDish();
+                if (sharedDish == null) {
+                    System.out.println("No dish payload found for ingest job " + id);
+                    request.setState("error");
+                    storage.storeRequest(id, request);
+                    return;
+                }
+
+                // ---- add ETL-node ---
+                List<String> etlNodeList = new ArrayList<>(this.etlNodes);
+                if (etlNodeList.isEmpty()) {
+                    retryOrFail(id, request, "ETL node unavailable");
+                    return;
+                }
+                
+                String node = etlNodeList.get(ThreadLocalRandom.current().nextInt(etlNodeList.size()));
+                String targetUrl = formatUrl(node, "/etl/process");
+                
+                com.example.shared.model.ETLQuery etlQuery = new com.example.shared.model.ETLQuery();
+                etlQuery.setDishes(List.of(sharedDish));
+
+                com.example.shared.model.ETLQueryResult result = restTemplate.postForObject(targetUrl, etlQuery, com.example.shared.model.ETLQueryResult.class);
+                
+                if (result == null || result.getChunks() == null) {
+                    retryOrFail(id, request, "ETL processing returned null");
+                    return;
+                }
+
+                List<String> dbNodeList = new ArrayList<>(this.dbNodes);
+                if (dbNodeList.isEmpty()) {
+                    retryOrFail(id, request, "DB node unavailable");
+                    return;
+                }
+                
+                String dbNode = dbNodeList.get(ThreadLocalRandom.current().nextInt(dbNodeList.size()));
+                String dbTargetUrl = formatUrl(dbNode, "/recipes/ingest");
+                
+                String response = restTemplate.postForObject(dbTargetUrl, result, String.class);
+                System.out.println("Recipe Node saved dish successfully. Response: " + response);
+                
+                request.setState("done");
+                storage.storeRequest(id, request);
+                storage.broadCastCopy(request);
+                // --- add ETL-node ----
+            } catch (Exception e) {
+                System.err.println("Failed to process dish ingest: " + e.getMessage());
+                retryOrFail(id, request, e.getMessage());
+            }
+        }
+    }
+
+    private void retryOrFail(String id, UserRequest request, String errorMsg) {
+        int retries = retryCounts.getOrDefault(id, 0) + 1;
+        if (retries > 3) {
+            System.out.println("Ingest job permanently failed for " + id + ": " + errorMsg);
+            request.setState("error");
+            storage.storeRequest(id, request);
+            retryCounts.remove(id);
+        } else {
+            retryCounts.put(id, retries);
+            System.out.println("Ingest job failed for " + id + ". Retrying in 5s... (attempt " + retries + ")");
+            retryScheduler.schedule(() -> this.addToQueue(id), 5, TimeUnit.SECONDS);
+        }
+    }
+    // --- add ETL-node ----
 
     private RecipeQuery sendToLLMNode(LLMRequest llmRequest) {
         int numberOfNodes = llmNodes.size();

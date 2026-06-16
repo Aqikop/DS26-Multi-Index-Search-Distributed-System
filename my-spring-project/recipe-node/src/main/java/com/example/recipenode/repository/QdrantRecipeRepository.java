@@ -101,4 +101,84 @@ public class QdrantRecipeRepository {
                     .toList();
         };
     }
+
+    // ---- add ETL-node ---
+    public void upsertChunks(List<Map<String, Object>> chunks) {
+        RecipeNodeProperties.Qdrant qdrant = properties.qdrant();
+        List<io.qdrant.client.grpc.Points.PointStruct> points = new ArrayList<>();
+        
+        for (Map<String, Object> chunk : chunks) {
+            String idStr = java.util.UUID.randomUUID().toString();
+            Map<String, Object> metadata = (Map<String, Object>) chunk.get("metadata");
+            if (chunk.containsKey("id") && chunk.get("id") != null) {
+                idStr = chunk.get("id").toString();
+            } else if (metadata != null && metadata.containsKey("id")) {
+                idStr = metadata.get("id").toString();
+            }
+            
+            List<Double> vectorList = (List<Double>) chunk.get("vector");
+            if (vectorList == null) {
+                log.warn("Missing vector in chunk for id: {}", idStr);
+                continue;
+            }
+            List<Float> floatList = new ArrayList<>(vectorList.size());
+            for (Double v : vectorList) floatList.add(v.floatValue());
+            
+            Map<String, io.qdrant.client.grpc.JsonWithInt.Value> payload = new LinkedHashMap<>();
+            if (metadata != null) {
+                for (Map.Entry<String, Object> entry : metadata.entrySet()) {
+                    io.qdrant.client.grpc.JsonWithInt.Value v = mapValue(entry.getValue());
+                    if (v != null) {
+                        payload.put(entry.getKey(), v);
+                    }
+                }
+            }
+            payload.put("text", io.qdrant.client.ValueFactory.value((String) chunk.get("text")));
+            
+            points.add(io.qdrant.client.grpc.Points.PointStruct.newBuilder()
+                    .setId(io.qdrant.client.PointIdFactory.id(java.util.UUID.fromString(idStr)))
+                    .setVectors(io.qdrant.client.grpc.Points.Vectors.newBuilder().setVector(
+                        io.qdrant.client.grpc.Points.Vector.newBuilder().addAllData(floatList).build()
+                    ).build())
+                    .putAllPayload(payload)
+                    .build());
+        }
+        
+        if (!points.isEmpty()) {
+            try {
+                qdrantClient.upsertAsync(qdrant.collection(), points).get(10, TimeUnit.SECONDS);
+                log.info("Upserted {} chunks to Qdrant collection {}", points.size(), qdrant.collection());
+            } catch (Exception e) {
+                log.error("Failed to upsert chunks to Qdrant", e);
+            }
+        }
+    }
+
+    private io.qdrant.client.grpc.JsonWithInt.Value mapValue(Object obj) {
+        if (obj == null) return io.qdrant.client.ValueFactory.nullValue();
+        if (obj instanceof String s) return io.qdrant.client.ValueFactory.value(s);
+        if (obj instanceof Integer i) return io.qdrant.client.ValueFactory.value((long) i);
+        if (obj instanceof Long l) return io.qdrant.client.ValueFactory.value(l);
+        if (obj instanceof Float f) return io.qdrant.client.ValueFactory.value((double) f);
+        if (obj instanceof Double d) return io.qdrant.client.ValueFactory.value(d);
+        if (obj instanceof Boolean b) return io.qdrant.client.ValueFactory.value(b);
+        if (obj instanceof List<?> l) {
+            List<io.qdrant.client.grpc.JsonWithInt.Value> list = new ArrayList<>();
+            for (Object item : l) {
+                io.qdrant.client.grpc.JsonWithInt.Value v = mapValue(item);
+                if (v != null) list.add(v);
+            }
+            return io.qdrant.client.ValueFactory.value(list);
+        }
+        if (obj instanceof Map<?, ?> m) {
+            Map<String, io.qdrant.client.grpc.JsonWithInt.Value> map = new LinkedHashMap<>();
+            for (Map.Entry<?, ?> entry : m.entrySet()) {
+                io.qdrant.client.grpc.JsonWithInt.Value v = mapValue(entry.getValue());
+                if (v != null) map.put(entry.getKey().toString(), v);
+            }
+            return io.qdrant.client.ValueFactory.value(map);
+        }
+        return io.qdrant.client.ValueFactory.value(obj.toString());
+    }
+    // --- add ETL-node ----
 }

@@ -42,4 +42,11 @@ public class RecipeService {
                 System.currentTimeMillis() - startTime, query.getRecipeQuery(), candidates.size(), results.size());
         return results;
     }
+
+    // ---- add ETL-node ---
+    public void ingest(List<java.util.Map<String, Object>> chunks) {
+        if (chunks == null || chunks.isEmpty()) return;
+        recipeRepository.upsertChunks(chunks);
+    }
+    // --- add ETL-node ----
 }

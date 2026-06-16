@@ -29,6 +29,15 @@ echo.
 curl -X POST "http://localhost:8080/apply?id=recipe-node-3:8102&type=db"
 echo.
 
+rem ---- add ETL-node ---
+echo.
+echo 5. Dang ky 2 ETL Node vao Coordinator-1...
+curl -X POST "http://localhost:8080/apply?id=etl-node-1:8140&type=etl"
+echo.
+curl -X POST "http://localhost:8080/apply?id=etl-node-2:8141&type=etl"
+echo.
+rem --- add ETL-node ----
+
 echo.
 echo ===================================================
 echo KET NOI THANH CONG! He thong da san sang nhan truy van.

@@ -68,8 +68,8 @@ public class ConsensusService {
             
             if (candidateRequestCount >= requestCount && this.voted.compareAndSet(false, true)) {
                 return true;
-                } 
-            }
+            } 
+        }
         return false;
     }
 
@@ -129,6 +129,9 @@ public class ConsensusService {
                 info.setCoordinatorNodes(coordinators);
                 info.setLlmNodes(processingService.getLlmNodes());
                 info.setRecipeNodes(processingService.getDbNodes());
+                // ---- add ETL-node ---
+                info.setEtlNodes(processingService.getEtlNodes());
+                // --- add ETL-node ----
                 return info;
             }
             return null;
@@ -164,6 +167,9 @@ public class ConsensusService {
                 storage.setNode(info.getCoordinatorNodes());
                 processingService.setLlmNodes(info.getLlmNodes());
                 processingService.setDbNodes(info.getRecipeNodes());
+                // ---- add ETL-node ---
+                processingService.setEtlNodes(info.getEtlNodes());
+                // --- add ETL-node ----
                 return true;
             }
         } catch (Exception e) {
