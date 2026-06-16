@@ -48,7 +48,7 @@ public class ConsensusService {
         this.leaderId = null;
         this.term = new AtomicInteger(0);
         this.leaderAlive = false;
-        }
+    }
 
     /**
      * Handles incoming Raft vote requests from candidates.
@@ -69,8 +69,8 @@ public class ConsensusService {
                 this.leaderAlive = true;
                 processingService.setIsLeader(false);
                 return true;
-                } 
-            }
+            } 
+        }
         return false;
     }
 
@@ -134,6 +134,9 @@ public class ConsensusService {
                 info.setCoordinatorNodes(coordinators);
                 info.setLlmNodes(processingService.getLlmNodes());
                 info.setRecipeNodes(processingService.getDbNodes());
+                // ---- add ETL-node ---
+                info.setEtlNodes(processingService.getEtlNodes());
+                // --- add ETL-node ----
                 return info;
             }
             return null;
@@ -169,6 +172,9 @@ public class ConsensusService {
                 storage.setNode(info.getCoordinatorNodes());
                 processingService.setLlmNodes(info.getLlmNodes());
                 processingService.setDbNodes(info.getRecipeNodes());
+                // ---- add ETL-node ---
+                processingService.setEtlNodes(info.getEtlNodes());
+                // --- add ETL-node ----
                 return true;
             }
         } catch (Exception e) {
@@ -237,7 +243,7 @@ public class ConsensusService {
                     if (response == null || !response) {
                         nodeStatus = "follower"; 
                         processingService.setIsLeader(false);
-                        }
+                    }
                 } catch (Exception e) {System.out.println("Broadcast failed.");}
             }
             System.out.println("Pinging other nodes.");
@@ -269,51 +275,52 @@ public class ConsensusService {
     private void runElection() {
         while (this.nodeStatus.equals("candidate")) {
             try {
-                        long randomDelay = ThreadLocalRandom.current().nextLong(1000, 2000 + 1);
-                        Thread.sleep(randomDelay);
-                    } catch (InterruptedException ignore) {}
+                long randomDelay = ThreadLocalRandom.current().nextLong(1000, 2000 + 1);
+                Thread.sleep(randomDelay);
+            } catch (InterruptedException ignore) {}
 
-                    if (!this.nodeStatus.equals("candidate")) return;
+            if (!this.nodeStatus.equals("candidate")) return;
 
-                    // this.term = term + 1;
-                    this.term.incrementAndGet();
-                    this.voted.set(false);
-                    int vote = 1;
+            // this.term = term + 1;
+            this.term.incrementAndGet();
+            this.voted.set(false);
+            int vote = 1;
 
-                    VoteRequest request = new VoteRequest();
-                    request.setRequestCount(storage.getRequestList().size());
-                    request.setCandidateId(this.nodeId);
+            VoteRequest request = new VoteRequest();
+            request.setRequestCount(storage.getRequestList().size());
+            request.setCandidateId(this.nodeId);
 
-                    // request.setRequestCount(4);
+            // request.setRequestCount(4);
 
-                    // request.setTerm(this.term);
-                    request.setTerm(this.term.get());
+            // request.setTerm(this.term);
+            request.setTerm(this.term.get());
 
-                    // System.out.println("Start election " + this.term);
-                    System.out.println("Start election " + this.term.get());
+            // System.out.println("Start election " + this.term);
+            System.out.println("Start election " + this.term.get());
 
-                    // check status again maybe??
-                    for (String node : nodesList) {
-                        try {
-                            String targetUrl = formatUrl(node, "/vote");
-                            HttpHeaders headers = new HttpHeaders();
-                            headers.setContentType(MediaType.APPLICATION_JSON);
-                            HttpEntity<VoteRequest> entity = new HttpEntity<>(request, headers);
-                            Boolean result = restTemplate.postForObject(targetUrl, entity, Boolean.class);
-                            // if (result) {vote = vote + 1;}
-                            if (Boolean.TRUE.equals(result)) {vote = vote + 1;}
-                        } catch (RestClientException e) { System.out.println("Ask for vote failed.");}
-                    }
+            // check status again maybe??
+            for (String node : nodesList) {
+                try {
+                    String targetUrl = formatUrl(node, "/vote");
+                    HttpHeaders headers = new HttpHeaders();
+                    headers.setContentType(MediaType.APPLICATION_JSON);
+                    HttpEntity<VoteRequest> entity = new HttpEntity<>(request, headers);
+                    Boolean result = restTemplate.postForObject(targetUrl, entity, Boolean.class);
+                    // if (result) {vote = vote + 1;}
+                    if (Boolean.TRUE.equals(result)) {vote = vote + 1;}
+                } catch (RestClientException e) { System.out.println("Ask for vote failed.");}
+            }
 
-                    if (vote > ((nodesList.size() + 1) / 2) && this.nodeStatus.equals("candidate")) {
-                        this.nodeStatus = "leader";
-                        processingService.setIsLeader(true);
-                        processingService.processingThread(); 
-                        processingService.updateQueue();
-                        System.out.println("Won");
-                    }
-                    else {System.out.println("Lost");}
-                }
+            if (vote > ((nodesList.size() + 1) / 2) && this.nodeStatus.equals("candidate")) {
+                this.nodeStatus = "leader";
+                processingService.setIsLeader(true);
+                processingService.processingThread(); 
+                processingService.updateQueue();
+                System.out.println("Won");
+            } else {
+                System.out.println("Lost");
+            }
+        }
     }
 
     private String formatUrl(String idOrAddress, String path) {

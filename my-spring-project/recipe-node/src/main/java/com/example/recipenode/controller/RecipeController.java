@@ -27,4 +27,12 @@ public class RecipeController {
     ResponseEntity<List<RecipeQueryResult>> search(@Valid @RequestBody RecipeQuery query) {
         return ResponseEntity.ok(RecipeService.search(query));
     }
+
+    // ---- add ETL-node ---
+    @PostMapping("/ingest")
+    public ResponseEntity<String> ingest(@RequestBody com.example.shared.model.ETLQueryResult result) {
+        RecipeService.ingest(result.getChunks());
+        return ResponseEntity.ok("Ingested successfully");
+    }
+    // --- add ETL-node ----
 }

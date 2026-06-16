@@ -13,6 +13,12 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.beans.factory.annotation.Value;
 
+// ---- add ETL-node ---
+import com.example.coordinator.model.UserRequest;
+import com.example.coordinator.service.RequestStorage;
+import java.time.LocalDateTime;
+// --- add ETL-node ----
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -25,14 +31,20 @@ import java.util.UUID;
 public class DishController {
     private final ObjectMapper objectMapper;
     private final RestTemplate restTemplate;
-    private final String etlNodeUrl;
+    // ---- add ETL-node ---
+    private final com.example.coordinator.service.ProcessingService processingService;
+    private final RequestStorage storage;
+    // --- add ETL-node ----
     private final Path dishesFile = Path.of("data", "dishes.json");
     private final Object lock = new Object();
 
-    public DishController(ObjectMapper objectMapper, RestTemplate restTemplate, @Value("${etl.node.url:http://localhost:8082}") String etlNodeUrl) {
+    public DishController(ObjectMapper objectMapper, RestTemplate restTemplate, com.example.coordinator.service.ProcessingService processingService, RequestStorage storage) {
         this.objectMapper = objectMapper.copy().enable(SerializationFeature.INDENT_OUTPUT);
         this.restTemplate = restTemplate;
-        this.etlNodeUrl = etlNodeUrl;
+        // ---- add ETL-node ---
+        this.processingService = processingService;
+        this.storage = storage;
+        // --- add ETL-node ----
         ensureDishesFile();
     }
 
@@ -86,29 +98,30 @@ public class DishController {
             data.put(dish.id, record);
             writeDishes(data);
 
-            // Send to ETL Node
-            try {
-                com.example.shared.model.ETLQuery etlQuery = new com.example.shared.model.ETLQuery();
+            // ---- add ETL-node ---
+            if (processingService.getIsLeader()) {
                 com.example.shared.model.ETLQuery.Dish sharedDish = new com.example.shared.model.ETLQuery.Dish();
                 sharedDish.setId(dish.id);
                 sharedDish.setName(dish.name);
                 sharedDish.setIngredients(dish.ingredients);
                 sharedDish.setCookingMethod(dish.cookingMethod);
-                etlQuery.setDishes(List.of(sharedDish));
 
-                com.example.shared.model.ETLQueryResult result = restTemplate.postForObject(etlNodeUrl + "/etl/process", etlQuery, com.example.shared.model.ETLQueryResult.class);
-                // TODO: Redirect result to recipe node for Qdrant upload
-                System.out.println("Received ETL result with " + (result != null && result.getChunks() != null ? result.getChunks().size() : 0) + " chunks.");
-                
-                // Pretty print the result so you can verify the metadata
-                if (result != null && result.getChunks() != null) {
-                    System.out.println("--- ENRICHED METADATA START ---");
-                    System.out.println(objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(result.getChunks()));
-                    System.out.println("--- ENRICHED METADATA END ---");
-                }
-            } catch (Exception e) {
-                System.err.println("Failed to process dish via ETL node: " + e.getMessage());
+                UserRequest userRequest = new UserRequest();
+                userRequest.setId(dish.id);
+                userRequest.setType("INGEST");
+                userRequest.setState("received");
+                userRequest.setIngestDish(sharedDish);
+                userRequest.setTtl(LocalDateTime.now().plusMinutes(5));
+
+                storage.storeRequest(dish.id, userRequest);
+                processingService.addToQueue(dish.id);
+                storage.broadCastCopy(userRequest);
+                System.out.println("Dish ingest queued with job ID: " + dish.id);
+            } else {
+                System.err.println("Cannot ingest dish on follower node!");
+                throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Cannot ingest dish on follower node. Please use the leader node.");
             }
+            // --- add ETL-node ----
 
             return dish;
         }

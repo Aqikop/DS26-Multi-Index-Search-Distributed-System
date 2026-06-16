@@ -6,6 +6,9 @@ public class NodesInfo {
     private List<String> coordinatorNodes;
     private List<String> llmNodes;
     private List<String> recipeNodes;
+    // ---- add ETL-node ---
+    private List<String> etlNodes;
+    // --- add ETL-node ----
 
     public NodesInfo() {}
 
@@ -17,4 +20,9 @@ public class NodesInfo {
 
     public List<String> getRecipeNodes() { return recipeNodes; }
     public void setRecipeNodes(List<String> recipeNodes) { this.recipeNodes = recipeNodes; }
+
+    // ---- add ETL-node ---
+    public List<String> getEtlNodes() { return etlNodes; }
+    public void setEtlNodes(List<String> etlNodes) { this.etlNodes = etlNodes; }
+    // --- add ETL-node ----
 }
