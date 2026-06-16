@@ -27,11 +27,12 @@ import com.example.shared.model.RecipeQueryResult;
 public class RecipeRankingService {
     private static final Logger log = LoggerFactory.getLogger(RecipeRankingService.class);
     private static final Pattern TOKEN_SPLIT = Pattern.compile("[^a-z0-9]+");
-    private static final double WEIGHT_QDRANT_SCORE = 0.40;
-    private static final double WEIGHT_TITLE_RELEVANCE = 0.20;
-    private static final double WEIGHT_INGREDIENT_OVERLAP = 0.20;
+    private static final double WEIGHT_QDRANT_SCORE = 0.35;
+    private static final double WEIGHT_TITLE_RELEVANCE = 0.15;
+    private static final double WEIGHT_INGREDIENT_OVERLAP = 0.15;
+    private static final double WEIGHT_INVENTORY_MATCH = 0.20;
     private static final double WEIGHT_COOK_TIME = 0.10;
-    private static final double WEIGHT_PROTEIN_RELEVANCE = 0.10;
+    private static final double WEIGHT_PROTEIN_RELEVANCE = 0.05;
     private static final double COOK_TIME_CEILING = 1.2;
     private static final double PARTIAL_PROTEIN_SCORE = 0.75;
     private static final double PARTIAL_TITLE_SCORE = 0.8;
@@ -73,18 +74,21 @@ public class RecipeRankingService {
         RecipeCandidate candidate = rankedCandidate.candidate();
         RecipeDocument document = rankedCandidate.document();
         
+        List<Ingredient> missingIngredients = calculateMissingIngredients(document.ingredients(), filters);
+        
         double qdrantScore = normalize(candidate.qdrantScore());
         double titleRelevance = titleRelevance(rawQuery, queryTerms, document);
         double ingredientOverlap = ingredientOverlap(queryTerms, document);
         double cookTimePreference = cookTimePreference(filters, document);
         double proteinRelevance = proteinRelevance(filters, document, queryTerms);
-        int matchedFilters = countMatchedFilters(document, filters);
+        double inventoryMatch = calculateInventoryMatch(document.ingredients(), missingIngredients, filters);
 
-        // Adjust weights to include titleRelevance
+        // Adjust weights to include titleRelevance and inventoryMatch
         double finalScore =
                 (qdrantScore * WEIGHT_QDRANT_SCORE)
                         + (titleRelevance * WEIGHT_TITLE_RELEVANCE)
                         + (ingredientOverlap * WEIGHT_INGREDIENT_OVERLAP)
+                        + (inventoryMatch * WEIGHT_INVENTORY_MATCH)
                         + (cookTimePreference * WEIGHT_COOK_TIME)
                         + (proteinRelevance * WEIGHT_PROTEIN_RELEVANCE);
 
@@ -93,10 +97,20 @@ public class RecipeRankingService {
         result.setPayload(document.payloadText());
         result.setScore(round(finalScore));
         result.setIngredients(document.ingredients());
-        result.setMissingIngredients(calculateMissingIngredients(document.ingredients(), filters));
+        result.setMissingIngredients(missingIngredients);
         result.setNutrition(document.nutrition());
-        result.setMetadata(metadata(candidate, document, matchedFilters, titleRelevance));
+        result.setMetadata(metadata(candidate, document, countMatchedFilters(document, filters), titleRelevance));
         return result;
+    }
+
+    private double calculateInventoryMatch(List<Ingredient> recipeIngredients, List<Ingredient> missingIngredients, RecipeFilters filters) {
+        if (filters == null || filters.getIngredients() == null || filters.getIngredients().isEmpty()) {
+            return 1.0; // If user didn't specify what they have, we don't penalize.
+        }
+        if (recipeIngredients == null || recipeIngredients.isEmpty()) {
+            return 0.5;
+        }
+        return Math.max(0.0, 1.0 - ((double) missingIngredients.size() / recipeIngredients.size()));
     }
 
     private List<Ingredient> calculateMissingIngredients(List<Ingredient> recipeIngredients, RecipeFilters filters) {

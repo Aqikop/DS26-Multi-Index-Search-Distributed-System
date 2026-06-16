@@ -6,6 +6,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
@@ -38,6 +39,9 @@ public class DishController {
     private final Path dishesFile = Path.of("data", "dishes.json");
     private final Object lock = new Object();
 
+    @Value("${admin.token}")
+    private String adminToken;
+
     public DishController(ObjectMapper objectMapper, RestTemplate restTemplate, com.example.coordinator.service.ProcessingService processingService, RequestStorage storage) {
         this.objectMapper = objectMapper.copy().enable(SerializationFeature.INDENT_OUTPUT);
         this.restTemplate = restTemplate;
@@ -65,7 +69,15 @@ public class DishController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public Dish createDish(@RequestBody Dish request) {
+    public Dish createDish(@RequestHeader(value = "Authorization", required = false) String authHeader, @RequestBody Dish request) {
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Missing or invalid Authorization header");
+        }
+        String token = authHeader.substring(7);
+        if (!token.equals(adminToken)) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid admin token");
+        }
+
         String name = clean(request.name);
 
         if (name.length() < 2) {

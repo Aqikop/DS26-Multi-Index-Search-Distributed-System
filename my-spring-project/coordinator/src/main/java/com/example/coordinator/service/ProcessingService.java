@@ -371,7 +371,10 @@ public class ProcessingService {
         int numberOfNodes = dbNodes.size();
         List<RecipeQueryResult> results = new ArrayList<>();
         if (numberOfNodes > 0)  {
-            for (String node : dbNodes) {
+            int attempt = 0;
+            do {
+                attempt++;
+                String node = (String) dbNodes.toArray()[ThreadLocalRandom.current().nextInt(numberOfNodes)];
                 try {
                     String targetUrl = formatUrl(node, "/recipes/search");
                     HttpHeaders headers = new HttpHeaders();
@@ -385,12 +388,14 @@ public class ProcessingService {
 
                     if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                         results.addAll(response.getBody());
+                        break; // Exit the loop on success
                     }
                 } catch (Exception e) {
                     System.out.println("Calling RECIPE NODE service failed: " + node);
                     e.printStackTrace();
                 }
-            }
+            } while (attempt < 3);
+
             results.sort((r1, r2) -> {
                 Double s1 = r1.getScore() != null ? r1.getScore() : 0.0;
                 Double s2 = r2.getScore() != null ? r2.getScore() : 0.0;
@@ -401,7 +406,7 @@ public class ProcessingService {
             }
             return results;
         } else {
-            System.out.println("No recipe nodes found");
+            System.out.println("No db nodes found");
             return null;
         }
     }

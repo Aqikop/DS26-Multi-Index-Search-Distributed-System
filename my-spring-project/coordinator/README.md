@@ -13,6 +13,8 @@ The `coordinator` module acts as the entry point for all user requests and ensur
 ## 📂 Key Components
 
 - **`ClientController`**: Exposes the public REST API (`/search`, `/get`) for frontend clients. Only the Leader processes these requests.
+- **`AuthController`**: Handles simple token-based authentication for the `/admin` portal (uses hardcoded config).
+- **`DishController`**: Secured endpoint for adding new dishes to the Qdrant database. Routes to the ETL node.
 - **`ClusterController`**: Internal endpoints (`/ping`, `/vote`, `/join`, `/copy`, etc.) used for inter-node communication and Raft consensus.
 - **`ConsensusService`**: Contains the core logic for the Raft algorithm (heartbeats, elections, terms, node discovery).
 - **`ProcessingService`**: The background worker thread that monitors the `requestQueue` and makes external HTTP calls to `llm-node` and `recipe-node`.

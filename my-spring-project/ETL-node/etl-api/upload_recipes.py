@@ -42,7 +42,7 @@ from nutrition_calculator import calculate_recipe_nutrition
 QDRANT_URL        = os.getenv("QDRANT_URL",
     "https://cf19a9b2-fef9-49a9-96b2-003c18348045.eu-central-1-0.aws.cloud.qdrant.io:6333")
 QDRANT_API_KEY    = ""
-COLLECTION        = "recipes_nutrition"
+COLLECTION        = "recipes_nutrition2"
 NUTRITION_COLLECTION = "nutrition"
 VECTOR_DIM        = 384
 BATCH_SIZE        = 512

@@ -47,40 +47,24 @@ GOOGLE_API_KEY=your_gemini_api_key_here
 
 ### Running the System
 
-You must start the components in the following order:
+The entire ecosystem is orchestrated using **Docker Compose**.
 
-#### 1. Start Qdrant Database
 ```bash
-docker run -p 6333:6333 -p 6334:6334 -v qdrant_storage:/qdrant/storage qdrant/qdrant
+# Start all microservices, databases, and the Nginx proxy
+docker-compose up -d --build
 ```
 
-#### 2. Start Python Backend (`llm-node/python-llm-api`)
-```bash
-cd llm-node/python-llm-api
-pip install -r requirements.txt
-uvicorn app:app --host 127.0.0.1 --port 5000
-```
+This single command will:
+1. Spin up the Qdrant Vector Database
+2. Spin up the Nginx Reverse Proxy
+3. Spin up the Frontend Vite App
+4. Spin up the Coordinator (Java)
+5. Spin up the Recipe Node (Java)
+6. Spin up the LLM Node Proxy (Java)
+7. Spin up the Python LLM API
+8. Spin up the Python ETL API
 
-#### 3. Start Java Nodes
-Open three separate terminals at the root of the project and run:
-
-**LLM Node Proxy (Port 8120):**
-```bash
-cd llm-node
-mvn spring-boot:run
-```
-
-**Recipe Node (Port 8082):**
-```bash
-cd recipe-node
-mvn spring-boot:run
-```
-
-**Coordinator Node (Port 8080):**
-```bash
-cd coordinator
-mvn spring-boot:run
-```
+Once running, you can access the application at `http://epicure.localhost`.
 
 *(Optional) Register Workers to Coordinator:*
 Depending on your exact cluster setup, you may need to register the worker nodes to the coordinator using the `/apply` endpoint.
